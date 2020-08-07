@@ -1,6 +1,6 @@
 CC:=gcc # C Compiler
 CFlags=-Wall -c -Iinclude # C Compiler Flags
-LFlags:=-Wall # Linker Flags
+LFlags:=-Wall -mwindows # Linker Flags
 
 .PHONY: all run runx clean unicode ansi
 
@@ -15,19 +15,22 @@ unicode: bin/fourier
 ansi: bin/fourier
 
 # Linking with lcomdlg32 makes open/save file dialogs work.
-bin/fourier: bin/main.o
-	$(CC) $(LFlags) bin/main.o -lcomdlg32 -o bin/fourier
+bin/fourier: bin/main.o bin/WindowManager.o
+	$(CC) $(LFlags) bin/main.o bin/WindowManager.o -lcomdlg32 -o bin/fourier
 
 bin/main.o: src/main.c
 	$(CC) $(CFlags) -o bin/main.o src/main.c
 
-# Compiles and runs.
-run: unicode
-	bin/fourier
+bin/WindowManager.o: src/WindowManager.c
+	$(CC) $(CFlags) -o bin/WindowManager.o src/WindowManager.c
 
-# "Run exclusively". Doesn't try to compile it, just runs it if it exists.
+# Compiles and runs. Output streams are redirected to a log.
+run: unicode
+	bin/fourier >>log.log 2>&1
+
+# "Run exclusively". Same as run, but won't try to compile it.
 runx:
-	bin/fourier
+	bin/fourier >>log.log 2>&1
 	
 clean:
 	rm -f bin/*
