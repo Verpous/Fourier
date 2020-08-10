@@ -14,26 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#include <stdio.h>
-#include "WindowManager.h"
+#include "FileManager.h"
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
+void ReadWaveFile(LPCTSTR path)
 {
-    fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
 
-    if (!InitializeWindows(hInstance))
-    {
-        return -1;
-    }
+}
 
-    // Entering our message loop.
-    MSG msg = {0};
+void WriteWaveFile()
+{
 
-    while (GetMessage(&msg, NULL, 0, 0))
-    {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
+}
 
-    return 0;
+void WriteNewWaveFile(LPCTSTR path)
+{
+
 }

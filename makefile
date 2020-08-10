@@ -1,5 +1,5 @@
 CC:=gcc # C Compiler
-CFlags=-Wall -c -Iinclude # C Compiler Flags
+CFlags=-Wall -Wno-unknown-pragmas -c -Iinclude # C Compiler Flags
 LFlags:=-Wall -mwindows # Linker Flags
 
 .PHONY: all run runx clean unicode ansi
@@ -15,14 +15,20 @@ unicode: bin/fourier
 ansi: bin/fourier
 
 # Linking with lcomdlg32 makes open/save file dialogs work.
-bin/fourier: bin/main.o bin/WindowManager.o
-	$(CC) $(LFlags) bin/main.o bin/WindowManager.o -lcomdlg32 -o bin/fourier
+bin/fourier: bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o
+	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o -lcomdlg32 -o bin/fourier
 
 bin/main.o: src/main.c
 	$(CC) $(CFlags) -o bin/main.o src/main.c
 
 bin/WindowManager.o: src/WindowManager.c
 	$(CC) $(CFlags) -o bin/WindowManager.o src/WindowManager.c
+
+bin/FileManager.o: src/FileManager.c
+	$(CC) $(CFlags) -o bin/FileManager.o src/FileManager.c
+
+bin/SoundEditor.o: src/SoundEditor.c
+	$(CC) $(CFlags) -o bin/SoundEditor.o src/SoundEditor.c
 
 # Compiles and runs. Output streams are redirected to a log.
 run: unicode
