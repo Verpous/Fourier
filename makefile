@@ -1,6 +1,6 @@
 CC:=gcc # C Compiler
-CFlags=-Wall -Wno-unknown-pragmas -c -Iinclude # C Compiler Flags
-LFlags:=-Wall -mwindows # Linker Flags
+CFlags=-Wall -Wno-unknown-pragmas -c -Iinclude # C Compiler Flags. -Wno-unknown-pragmas gets rid of warnings about regions in the code.
+LFlags:=-Wall -mwindows # Linker Flags. -mwindows means that when you run the program it doesn't open cmd.
 
 .PHONY: all run runx clean unicode ansi
 

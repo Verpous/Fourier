@@ -14,9 +14,6 @@ typedef struct NewFileOptionsWindow
     HWND depthOptions[4];
 } NewFileOptionsWindow;
 
-// Handle to the main window.
-HWND mainWindowHandle;
-NewFileOptionsWindow* newFileOptionsHandles;
 
 // Registers classes and creates the main window.
 char InitializeWindows(HINSTANCE);
@@ -74,7 +71,7 @@ void PaintNewFileOptionsWindow(HWND);
 void AddNewFileOptionsControls(HWND);
 
 // Paints a trackbar-textbox-units triple with the given parameters.
-void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, LPCTSTR, LPCTSTR);
+void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, LPCTSTR, LPCTSTR);
 
 // Closes the new file options window and re-enables its parent.
 void CloseNewFileOptions(HWND);
