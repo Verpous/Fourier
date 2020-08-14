@@ -15,8 +15,9 @@ unicode: bin/fourier
 ansi: bin/fourier
 
 # Linking with lcomdlg32 makes open/save file dialogs work.
+# Linking with lksuser makes the KSDATAFORMAT_SUBTYPE_PCM macro work.
 bin/fourier: bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o
-	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o -lcomdlg32 -o bin/fourier
+	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o -lcomdlg32 -lksuser -o bin/fourier
 
 bin/main.o: src/main.c
 	$(CC) $(CFlags) -o bin/main.o src/main.c
