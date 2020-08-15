@@ -16,8 +16,8 @@ ansi: bin/fourier
 
 # Linking with lcomdlg32 makes open/save file dialogs work.
 # Linking with lksuser makes the KSDATAFORMAT_SUBTYPE_PCM macro work.
-bin/fourier: bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o
-	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o -lcomdlg32 -lksuser -o bin/fourier
+bin/fourier: bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o bin/MyUtils.o
+	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o bin/MyUtils.o -lcomdlg32 -lksuser -o bin/fourier
 
 bin/main.o: src/main.c
 	$(CC) $(CFlags) -o bin/main.o src/main.c
@@ -30,10 +30,13 @@ bin/FileManager.o: src/FileManager.c
 
 bin/SoundEditor.o: src/SoundEditor.c
 	$(CC) $(CFlags) -o bin/SoundEditor.o src/SoundEditor.c
+	
+bin/MyUtils.o: src/MyUtils.c
+	$(CC) $(CFlags) -o bin/MyUtils.o src/MyUtils.c
 
 # Compiles and runs. Output streams are redirected to a log.
 run: unicode
-	bin/fourier >>log.log 2>&1
+	bin/fourier
 
 # "Run exclusively". Same as run, but won't try to compile it.
 runx:
