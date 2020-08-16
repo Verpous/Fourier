@@ -17,10 +17,9 @@
 #include "WindowManager.h"
 #include "SoundEditor.h"
 #include "FileManager.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <commctrl.h>
-#include <tchar.h>
+#include <stdio.h> // For printing errors and such.
+#include <commctrl.h> // For some trackbar-related things.
+#include <tchar.h> // For dealing with unicode and ANSI strings.
 
 // Turns any text you give it into a string.
 #define Stringify(x) #x 
@@ -43,9 +42,10 @@
 #define NEW_FILE_OPTIONS_OK 1
 #define NEW_FILE_OPTIONS_CANCEL 2
 
+#define MSG_BOX_OK 1
 #define MSG_BOX_CANCEL 2
-#define MSG_BOX_NO 7
 #define MSG_BOX_YES 6
+#define MSG_BOX_NO 7
 
 // File length is measured in seconds.
 #define FILE_MIN_LENGTH 1
@@ -169,6 +169,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             ProcessMainWindowCommand(windowHandle, wparam, lparam);
             return 0;
         case WM_DESTROY:
+            CloseCurrentFile();
             PostQuitMessage(0);
             return 0;
         default:
@@ -265,9 +266,11 @@ void FileOpen(HWND windowHandle)
     // Giving the user a chance to save if there is unsaved progress.
     if (HasUnsavedProgress())
     {
-        int decision = MessageBox(windowHandle, TEXT("There is unsaved progress that will be lost if you proceed without saving it. Would you like to save?"), TEXT("Warning"), MB_ICONWARNING | MB_YESNOCANCEL);
+        int choice = MessageBox(windowHandle,
+            TEXT("There is unsaved progress that will be lost if you proceed without saving it. Would you like to save?"),
+            TEXT("Warning"), MB_ICONWARNING | MB_YESNOCANCEL);
 
-        switch (decision)
+        switch (choice)
         {
             case MSG_BOX_CANCEL:
                 return; // Quitting the whole function in case of cancel.
@@ -295,7 +298,57 @@ void FileOpen(HWND windowHandle)
 
     if (GetOpenFileName(&ofn))
     {
-        ReadWaveFile(filename);
+        ReadWaveResult result = ReadWaveFile(filename);
+        LPTSTR messageText = NULL;
+
+        switch (ReadWaveResultCode(result))
+        {
+            case FILE_READ_SUCCESS:
+                if (ResultHasWarning(result))
+                {
+                    int choice = MessageBox(windowHandle,
+                        TEXT("The file contains some information which is ignored by this program, which may lead to unexpected results."),
+                        TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
+                    
+                    if (choice == MSG_BOX_CANCEL)
+                    {
+                        CloseCurrentFile();
+                        return;
+                    }
+                }
+                
+                // TODO: paint main window with stuff from the file.
+
+                return;
+            case FILE_CANT_OPEN:
+                messageText = TEXT("The file could not be opened. It may be open in another program.");
+                break;
+            case FILE_NOT_WAVE:
+                messageText = TEXT("The file is not a WAVE file.");
+                break;
+            case FILE_BAD_WAVE:
+                messageText = TEXT("The file is not entirely compliant with the WAVE format specifications.");
+                break;
+            case FILE_BAD_FORMAT:
+                messageText = TEXT("The file uses an unsupported audio format.");
+                break;
+            case FILE_BAD_BITDEPTH:
+                messageText = TEXT("The file uses an unsupported bit depth.");
+                break;
+            case FILE_BAD_FREQUENCY:
+                messageText = TEXT("The file uses an unsupported sample rate.");
+                break;
+            case FILE_BAD_SIZE:
+                messageText = TEXT("The file's actual size does not match up with what it should be.");
+                break;
+            case FILE_MISC_ERROR:
+                messageText = TEXT("A miscellaneous error occured.");
+                break;
+            default:
+                break;
+        }
+
+        MessageBox(windowHandle, messageText, NULL, MB_OK | MB_ICONERROR);
     }
     else
     {
@@ -548,15 +601,6 @@ LRESULT CALLBACK SelectFileOptionProcedure(HWND windowHandle, UINT msg, WPARAM w
         case WM_COMMAND:
             ProcessSelectFileOptionCommand(windowHandle, wparam, lparam);
             return 0;
-        case WM_ENABLE:
-            if (wparam)
-            {
-                // TODO: Check if a file has been created or opened probably using something in FileManager or SoundEditor that doesn't exist yet, and only close this window if that condition is met.
-                // TODO: This line causes the program to crash when it occurs after closing the open file dialog. I imagine it will do so even when it's made conditional. Maybe a small delay will fix it.
-                CloseSelectFileOption(windowHandle);
-            }
-
-            return 0;
         case WM_CLOSE:
             CloseSelectFileOption(windowHandle);
             return 0;
@@ -578,7 +622,9 @@ void PaintSelectFileOptionWindow(HWND windowHandle)
 void CloseSelectFileOption(HWND windowHandle)
 {
     // Enabling the parent window and destroying this one.
-    EnableWindow(GetWindow(windowHandle, GW_OWNER), TRUE);
+    HWND parent = GetWindow(windowHandle, GW_OWNER);
+    EnableWindow(parent, TRUE);
+    SetActiveWindow(parent); // Sometimes the parent window wasn't given the focus again when you close this window.
     DestroyWindow(windowHandle);
 }
 
@@ -594,6 +640,13 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
                     break;
                 case FILE_MENU_OPEN:
                     FileOpen(windowHandle);
+
+                    // If the FileOpen operation was a success, closing this menu.
+                    if (IsFileOpen())
+                    {
+                        CloseSelectFileOption(windowHandle);
+                    }
+
                     break;
                 default:
                     break;    

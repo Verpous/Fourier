@@ -17,11 +17,11 @@
 #include "FileManager.h"
 #include "SoundEditor.h"
 #include "MyUtils.h"
-#include <tchar.h>
-#include <ksmedia.h>
-#include <mmreg.h>
-#include <math.h>
-#include <stdlib.h>
+#include <tchar.h> // For dealing with strings that may be unicode or ANSI.
+#include <ksmedia.h> // For the KSDATAFORMAT_SUBTYPE_PCM macro.
+#include <math.h> // For the min macro.
+#include <stdlib.h> // For malloc and such.
+#include <share.h> // For shflags to _tfsopen.
 
 #define FOURCC_WAVE mmioFOURCC('W', 'A', 'V', 'E')
 #define FOURCC_FORMAT mmioFOURCC('f', 'm', 't', ' ')
@@ -32,12 +32,15 @@
 #define FOURCC_PLAYLIST mmioFOURCC('p', 'l', 's', 't')
 #define FOURCC_SAMPLER mmioFOURCC('s', 'm', 'p', 'l')
 
-#define MAX_CHUNK_ITERATIONS 1 << 16
+#define MAX_CHUNK_ITERATIONS 1 << 16 // Various loops use this to know when to stop in case the WAVE file is really stupid and has a lot of chunks with nothing.
 
 static FileInfo* fileInfo = NULL;
 
-void CreateFileInfo(LPCTSTR path)
+void SetCurrentFile(LPCTSTR path)
 {
+    // This won't do anything if a file isn't already open.
+    CloseCurrentFile();
+
     fileInfo = calloc(1, sizeof(FileInfo));
 
     // Creating copy of path string on heap for long term storage. +1 because of the null character.
@@ -46,10 +49,10 @@ void CreateFileInfo(LPCTSTR path)
     _tcscpy(fileInfo->path, path);
 }
 
-void DestroyFileInfo()
+void CloseCurrentFile()
 {
     // Dodging null pointer exceptions like a boss.
-    if (fileInfo == NULL)
+    if (!IsFileOpen())
     {
         return;
     }
@@ -76,20 +79,20 @@ void DestroyFileInfo()
 
 ReadWaveResult ReadWaveFile(LPCTSTR path)
 {
-    if (fileInfo != NULL)
-    {
-        DestroyFileInfo();
-    }
+    // For all errors other than FILE_CANT_OPEN, this would be done when we SetCurrentFile. But for consistency I think it should happen for FILE_CANT_OPEN as well.
+    CloseCurrentFile();
 
-    FILE* file = _tfopen(path, TEXT("r+b"));
+    // Using _tfsopen rather than _tfopen so we can specify that we want exclusive write access.
+    FILE* file = _tfsopen(path, TEXT("r+b"), _SH_DENYWR);
 
     // This is the only error that we can return from immediately because after this point, we'll have an open file and memory allocation that will need to be cleared before we can exit.
     if (file == NULL)
     {
+        fprintf(stderr, "fopen failed with error: %s.\n", strerror(errno));
         return FILE_CANT_OPEN;
     }
 
-    CreateFileInfo(path);
+    SetCurrentFile(path);
     fileInfo->file = file;
 
     WaveHeader waveHeader;
@@ -97,12 +100,12 @@ ReadWaveResult ReadWaveFile(LPCTSTR path)
 
     // Reading the opening part of the file. This includes the RIFF character code, the file size, and the WAVE character code. After this there's all the subchunks.
     // If we read it successfully we also verify that it has the right values in this header.
-    if (fread(&waveHeader, sizeof(WaveHeader), 1, file) == 1 && waveHeader.chunkHeader.id == FOURCC_RIFF && waveHeader.id == mmioFOURCC('W', 'A', 'V', 'E'))
+    if (fread(&waveHeader, sizeof(WaveHeader), 1, file) == 1 && waveHeader.chunkHeader.id == FOURCC_RIFF && waveHeader.id == FOURCC_WAVE)
     {
         // Verifying that the file size is as described. This has the (much desired) effect of also verifying that the file size doesn't exceed 4GB, which we'll rely on when we use functions like fseek from now on.
         _fseeki64(file, 0, SEEK_END);
 
-        if (_ftelli64(file) == (__int64)waveHeader.chunkHeader.size)
+        if (_ftelli64(file) - sizeof(ChunkHeader) == waveHeader.chunkHeader.size)
         {
             // Now we're gonna search for the chunks listed below. The rest aren't relevant to us.
             // The variables are initialized to 0 because it is a value they can't possibly get otherwise, and it'll help us determine which chunks were found later on.
@@ -121,24 +124,27 @@ ReadWaveResult ReadWaveFile(LPCTSTR path)
                 }
                 else
                 {
+                    fprintf(stderr, "Failed to read one of the important chunks.\n");
                     result |= FILE_BAD_WAVE;
                 }
             }
         }
         else
         {
+            fprintf(stderr, "File size is %lld while it says it should be %lu.\n", _ftelli64(file) - sizeof(ChunkHeader), waveHeader.chunkHeader.size);
             result |= FILE_BAD_SIZE;
         }
     }
     else
     {
+        fprintf(stderr, "File does not have a RIFF or WAVE header or they could not be read.\n");
         result |= FILE_NOT_WAVE;
     }
 
     // Freeing memory if the operation was a failure.
     if (ReadWaveResultCode(result) != FILE_READ_SUCCESS)
     {
-        DestroyFileInfo();
+        CloseCurrentFile();
     }
 
     return result;
@@ -162,6 +168,7 @@ ReadWaveResult FindImportantChunks(DWORD* formatChunk, DWORD* waveDataChunk, DWO
         // Theoretically, you could devise a file that has looked like a WAVE file until now, but actually has 536,870,910 empty chunks and that's it. Well I'm not falling for that!
         if (iterations++ > MAX_CHUNK_ITERATIONS)
         {
+            fprintf(stderr, "Reached max iterations in FindImportantChunks.\n");
             return FILE_BAD_WAVE;
         }
 
@@ -235,23 +242,26 @@ char ReadWaveformChunk(DWORD chunkOffset)
     {
         // I'd rather have segments in an array than a linked list, which means I have to count how many segments there are first.
         ChunkHeader listHeader, segmentHeader;
-        DWORD segmentsLength = 0, iterations = 0;
+        DWORD segmentsLength = 0;
         __int64 currentPos = 0; // This is the offset relative to after the 'wavl' FOURCC that we are in.
         fread(&listHeader, sizeof(ChunkHeader), 1, file); // We don't check that this fread succeeded because it has to, since it succeeded before when we found this chunk.
         _fseeki64(file, sizeof(FOURCC), SEEK_CUR); // Positioning ourselves for where we'll start iterating on chunks from.
 
         while (currentPos < listHeader.size - sizeof(FOURCC) && fread(&segmentHeader, sizeof(ChunkHeader), 1, file) == 1)
         {
-            // Just to be safe, I make sure the WAVE file isn't some really stupid one with thousands or millions of tiny ass chunks designed to screw with me.
-            if (iterations++ > MAX_CHUNK_ITERATIONS)
-            {
-                return FALSE;
-            }
-
-            // Even though I don't think it's possible, I stay safe from unsupported chunks even inside this list.
             if (segmentHeader.id == FOURCC_DATA || segmentHeader.id == FOURCC_SILENT)
             {
-                segmentsLength++;
+                // Just to be safe, I make sure the WAVE file isn't some really stupid one with thousands or millions of tiny ass chunks designed to screw with me.
+                if (segmentsLength++ > MAX_CHUNK_ITERATIONS)
+                {
+                    fprintf(stderr, "Reached max iterations in ReadWaveformChunk.\n");
+                    return FALSE;
+                }
+            }
+            else // Don't allow waveform segments that aren't recognized.
+            {
+                fprintf(stderr, "Unsupported data segment detected at offset: %lld.\n", chunkOffset + sizeof(ChunkHeader) + sizeof(FOURCC) + currentPos);
+                return FALSE;
             }
             
             // Now to set the file position such that it points to where the next chunk starts.
@@ -262,9 +272,10 @@ char ReadWaveformChunk(DWORD chunkOffset)
             _fseeki64(file, nextPosOffset, SEEK_CUR);
         }
 
-        // Gotta have at least one segment.
-        if (segmentsLength == 0)
+        // Gotta have at least one segment, and you gotta end exactly where the list size predicted.
+        if (segmentsLength == 0 || currentPos != listHeader.size - sizeof(FOURCC))
         {
+            fprintf(stderr, "%s.\n", segmentsLength == 0 ? "No data segments found" : "currentPos didn't end exactly on the list size");
             return FALSE;
         }
 
@@ -272,28 +283,38 @@ char ReadWaveformChunk(DWORD chunkOffset)
         WaveformSegment* segments = malloc(segmentsLength * sizeof(WaveformSegment));
         DWORD i = 0;
         currentPos = 0;
+        fileInfo->waveform.segments = segments; // Assigning this now so that if we return early from an error, there won't be a memory leak.
         _fseeki64(file, chunkOffset + sizeof(ChunkHeader) + sizeof(FOURCC), SEEK_SET);
 
         // This time we won't play it safe with things like iteration count because we're following the same steps, so we know it's safe.
         while (currentPos < listHeader.size - sizeof(FOURCC) && fread(&segmentHeader, sizeof(ChunkHeader), 1, file) == 1)
         {
-            // Even though I don't think it's possible, I stay safe from unsupported chunks even inside this list.
-            if (segmentHeader.id == FOURCC_DATA || segmentHeader.id == FOURCC_SILENT)
+            // Slim chance but maybe some fread error or something happened in the last loop and not this one which could cause a buffer overflow.
+            if (i >= segmentsLength)
             {
-                segments[i].header = segmentHeader;
-                segments[i].relativeOffset = currentPos;
-                i++;
+                fprintf(stderr, "More waveform segments were found around the second loop than the first.\n");
+                return FALSE;
             }
+
+            segments[i].header = segmentHeader;
+            segments[i].relativeOffset = currentPos;
 
             // Moving to next.
             __int64 nextPosOffset = segments[i].header.size + (segments[i].header.size % 2);
             currentPos += sizeof(ChunkHeader) + nextPosOffset;
             _fseeki64(file, nextPosOffset, SEEK_CUR);
+            i++;
+        }
+
+        // For the same reason we checked that i is valid inside the loop, maybe this time we had errors and read less.
+        if (i != segmentsLength)
+        {
+            fprintf(stderr, "Fewer waveform segments were found around the second loop than the first. First loop: %lu, second loop: %lu.\n", segmentsLength, i);
+            return FALSE;
         }
 
         fileInfo->waveform.offset = chunkOffset + sizeof(ChunkHeader) + sizeof(FOURCC);
         fileInfo->waveform.segmentsLength = segmentsLength;
-        fileInfo->waveform.segments = segments;
     }
     else // File has a single data chunk. This makes our jobs easier.
     {
@@ -327,12 +348,14 @@ char ReadCueChunk(DWORD chunkOffset)
         // If this read fails there's a problem.
         if (fread(cue, sizeof(CueChunk) - sizeof(CuePoint*), 1, file) != 1)
         {
+            fprintf(stderr, "Failed to read cue chunk.\n");
             return FALSE;
         }
 
         // Ensuring that there's cue points, and also that there isn't so many that it's absurd.
         if (cue->cuePoints == 0 || cue->cuePoints > MAX_CHUNK_ITERATIONS)
         {
+            fprintf(stderr, "There are %lu cue points, which is invalid.\n", cue->cuePoints);
             return FALSE;
         }
 
@@ -342,6 +365,7 @@ char ReadCueChunk(DWORD chunkOffset)
 
         if (fread(pointsArr, sizeof(CuePoint), cue->cuePoints, file) != cue->cuePoints)
         {
+            fprintf(stderr, "Failed to read cue points array.\n");
             return FALSE;
         }
 
@@ -386,9 +410,11 @@ ReadWaveResult ValidateFormat()
     // I only support WAVE_FORMAT_PCM or WAVE_FORMAT_EXTENSIBLE with the PCM subtype. In case it's extensible, I ensure some of the fields are set appropriately.
     // I found found some weird files with junk padding at the end of the format chunk, so I only require that the chunk be at least the size it needs to be, not exactly.
     // Though some may think it wise, I think verifying that cbSize is at a correct value of at least 22 is unnecessary since the size check for the entire chunk covers it.
-    if (!((formatExt->Format.wFormatTag == WAVE_FORMAT_PCM && fileInfo->format.header.size >= sizeof(WAVEFORMATEX)) ||
-        (formatExt->Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE && fileInfo->format.header.size >= sizeof(WAVEFORMATEXTENSIBLE) && IsEqualGUID(&(formatExt->SubFormat), &KSDATAFORMAT_SUBTYPE_PCM))))
+    // A lot of WAVE files tend to have a format chunk size of 16 (because it's WAVEFORMATEX without the cbSize field) even though the specifications seem to forbid that. I support it.
+    if ((formatExt->Format.wFormatTag != WAVE_FORMAT_PCM || fileInfo->format.header.size < sizeof(WAVEFORMATEX) - sizeof(WORD)) &&
+        (formatExt->Format.wFormatTag != WAVE_FORMAT_EXTENSIBLE || fileInfo->format.header.size < sizeof(WAVEFORMATEXTENSIBLE) || !IsEqualGUID(&(formatExt->SubFormat), &KSDATAFORMAT_SUBTYPE_PCM)))
     {
+        fprintf(stderr, "Unsupported format tag: 0x%hX.\n", formatExt->Format.wFormatTag);
         return FILE_BAD_FORMAT;
     }
 
@@ -396,6 +422,7 @@ ReadWaveResult ValidateFormat()
     // In the future I might just not even impose any limit on the sample rate. I don't know if there's any reason to. But for now this is here. // TODO: decide on this.
     if (!(FILE_MIN_FREQUENCY <= formatExt->Format.nSamplesPerSec && formatExt->Format.nSamplesPerSec <= FILE_MAX_FREQUENCY))
     {
+        fprintf(stderr, "Unsupported sample rate: %lu.\n", formatExt->Format.nSamplesPerSec);
         return FILE_BAD_FREQUENCY;
     }
 
@@ -404,18 +431,21 @@ ReadWaveResult ValidateFormat()
     // The reason for this ordering is that we check the things that are common for both supported formats before branching to check the remaining stuff separately.
     if (formatExt->Format.nBlockAlign != (formatExt->Format.wBitsPerSample * formatExt->Format.nChannels) / 8)
     {
+        fprintf(stderr, "nBlockAlign does not equal to (wBitsPerSample * nChannels) / 8.\n");
         return FILE_BAD_WAVE;
     }
 
     // nAvgBytesPerSec must be the product of nBlockAlign with nSamplesPerSec.
     if (formatExt->Format.nAvgBytesPerSec != formatExt->Format.nBlockAlign * formatExt->Format.nSamplesPerSec)
     {
+        fprintf(stderr, "nAvgBytesPerSec is not the product of nBlockAlign and nSamplesPerSec.\n");
         return FILE_BAD_WAVE;
     }
 
     // File's gotta have channels. The program supports any number of channels that isn't 0.
     if (formatExt->Format.nChannels == 0)
     {
+        fprintf(stderr, "File has 0 channels.\n");
         return FILE_BAD_WAVE;
     }
 
@@ -428,6 +458,7 @@ ReadWaveResult ValidateFormat()
         // For PCM format, the BitsPerSample is exactly the bit-depth of a single sample of a single channel, which makes our jobs easy.
         if (!(FILE_MIN_DEPTH <= divResult.quot && divResult.quot <= FILE_MAX_DEPTH) || divResult.rem != 0)
         {
+            fprintf(stderr, "File is PCM and has an invalid bit depth of %hu", formatExt->Format.wBitsPerSample);
             return FILE_BAD_BITDEPTH;
         }
     }
@@ -439,12 +470,14 @@ ReadWaveResult ValidateFormat()
         // For extensible format, the wValidBitsPerSample is exactly the bit-depth of a single sample of a single channel.
         if (!(FILE_MIN_DEPTH <= divResult.quot && divResult.quot <= FILE_MAX_DEPTH) || divResult.rem != 0)
         {
+            fprintf(stderr, "File is EXTENSIBLE and has an invalid bit depth of %hu", formatExt->Samples.wValidBitsPerSample);
             return FILE_BAD_BITDEPTH;
         }
 
         // wBitsPerSample has to be a multiple of 8, and at least as large as the wValidBitsPerSample.
         if (formatExt->Format.wBitsPerSample % 8 != 0 || formatExt->Format.wBitsPerSample < formatExt->Samples.wValidBitsPerSample)
         {
+            fprintf(stderr, "wBitsPerSample is not a multiple of 8 or it is smaller than the bit-depth.\n");
             return FILE_BAD_WAVE;
         }
     }
@@ -454,6 +487,7 @@ ReadWaveResult ValidateFormat()
 
 ReadWaveResult ValidateWaveform()
 {
+    // Nothing really needs verifying about the waveform that hasn't already been verified in ReadWaveformChunk, but I'll keep this function around in case something comes up.
     return FILE_READ_SUCCESS;
 }
 
@@ -482,6 +516,7 @@ ReadWaveResult ValidateCue()
         // If we couldn't find a corresponding waveform segment, it's a failure.
         if (dataIndex == segmentsLength || segments[dataIndex].header.id != pointsArr[i].chunkId)
         {
+            fprintf(stderr, "One of the cue points does not correspond to an existing waveform segment.\n");
             return FILE_BAD_WAVE;
         }
     }
@@ -501,5 +536,10 @@ void WriteNewWaveFile(LPCTSTR path)
 
 char IsFileNew()
 {
-    return fileInfo != NULL && fileInfo->path == NULL;
+    return IsFileOpen() && fileInfo->path == NULL;
+}
+
+char IsFileOpen()
+{
+    return fileInfo != NULL;
 }

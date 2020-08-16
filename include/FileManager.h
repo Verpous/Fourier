@@ -1,9 +1,9 @@
 #ifndef FILE_MANAGER_H
 #define FILE_MANAGER_H
 
-#include <windows.h>
-#include <mmreg.h>
-#include <stdio.h>
+#include <windows.h> // For various winapi features.
+#include <mmreg.h> // For various WAVE-related things.
+#include <stdio.h> // For dealing with files.
 
 // Frequencies we support, measured in Hertz.
 #define FILE_MIN_FREQUENCY 8000
@@ -89,11 +89,11 @@ typedef struct FileInfo
     CueChunk* cue; // This chunk is in a pointer while others aren't because this one is optional.
 } FileInfo;
 
-// Allocates and initializes fileInfo.
-void CreateFileInfo(LPCTSTR);
+// Allocates and initializes data for treating the file at the given path as the currently open file.
+void SetCurrentFile(LPCTSTR);
 
-// Deallocates fileInfo and removes the reference.
-void DestroyFileInfo();
+// Closes the current working file, deallocates info we stored about it and sets the current open file to none.
+void CloseCurrentFile();
 
 // Takes a path to a WAVE file and verifies that it is a WAVE file, then reads its data into memory.
 ReadWaveResult ReadWaveFile(LPCTSTR);
@@ -133,5 +133,8 @@ void WriteNewWaveFile(LPCTSTR);
 
 // Check if a file is new, that is it doesn't have any save location associated with it yet.
 char IsFileNew();
+
+// Returns nonzero value iff a file is currently being worked on.
+char IsFileOpen();
 
 #endif

@@ -1,7 +1,7 @@
 #ifndef WINDOWS_MANAGER_H
 #define WINDOWS_MANAGER_H
 
-#include <windows.h>
+#include <windows.h> // Do I need to explain why this is included?
 
 typedef struct NewFileOptionsWindow
 {

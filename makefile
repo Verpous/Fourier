@@ -36,11 +36,15 @@ bin/MyUtils.o: src/MyUtils.c
 
 # Compiles and runs. Output streams are redirected to a log.
 run: unicode
-	bin/fourier
+	bin/fourier >>log.log 2>&1
 
 # "Run exclusively". Same as run, but won't try to compile it.
 runx:
 	bin/fourier >>log.log 2>&1
+
+# Same as run but without the io redirection. Intended for use by the code runner extension in vscode so it can display output.
+runvscode: unicode
+	bin/fourier
 	
 clean:
 	rm -f bin/*
