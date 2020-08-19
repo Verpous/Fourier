@@ -13,22 +13,33 @@
 #define FILE_MIN_DEPTH 1
 #define FILE_MAX_DEPTH 4
 
-#define ReadWaveResultCode(x) ((~FILE_READ_WARNING) & (x))
-#define ResultHasWarning(x) (FILE_READ_WARNING & (x))
+// Beyond this number of channels, the WAVE file specifications won't tell you what the channels mean.
+#define MAX_NAMED_CHANNELS 18
+
+#define ResultHasError(x) (0x0000FFFF & (x))
+#define ResultHasWarning(x) (0xFFFF0000 & (x))
+#define ResultErrorCode(x) ResultHasError(x)
+#define ResultWarningCode(x) ResultHasWarning(x)
 
 // How this enum works: Results are numbered as usual, but the MSB is OR'd in when you want to differentiate between success without warning and with.
 typedef enum
 {
-    FILE_READ_SUCCESS   = 0, // The fact that this is 0 means you can OR it with an error and get the error.
-    FILE_CANT_OPEN      = 1,
-    FILE_NOT_WAVE       = 2,
-    FILE_BAD_WAVE       = 3,
-    FILE_BAD_FORMAT     = 4,
-    FILE_BAD_BITDEPTH   = 5,
-    FILE_BAD_FREQUENCY  = 6,
-    FILE_BAD_SIZE       = 7,
-    FILE_MISC_ERROR     = 8,
-    FILE_READ_WARNING   = 0x80000000,
+    // Success is 0 so you can OR it with anything.
+    FILE_READ_SUCCESS   = 0x00000000, 
+    
+    // The lower 16 bits are used for errors.
+    FILE_CANT_OPEN      = 0x00000001,
+    FILE_NOT_WAVE       = 0x00000002,
+    FILE_BAD_WAVE       = 0x00000004,
+    FILE_BAD_FORMAT     = 0x00000008,
+    FILE_BAD_BITDEPTH   = 0x00000010,
+    FILE_BAD_FREQUENCY  = 0x00000020,
+    FILE_BAD_SIZE       = 0x00000040,
+    FILE_MISC_ERROR     = 0x00000080,
+
+    // The higher 16 bits are used for warnings.
+    FILE_CHUNK_WARNING  = 0x80000000,
+    FILE_CHAN_WARNING   = 0x40000000,
 } ReadWaveResult;
 
 typedef struct ChunkHeader
@@ -80,13 +91,23 @@ typedef struct CueChunk
     CuePoint* pointsArr;
 } CueChunk;
 
+typedef struct FactChunk
+{
+    ChunkHeader header;
+    DWORD sampleLength;
+} FactChunk;
+
 typedef struct FileInfo
 {
     FILE* file;
     LPTSTR path;
+    WaveHeader header;
     FormatChunk format; 
     WaveformChunk waveform;
-    CueChunk* cue; // This chunk is in a pointer while others aren't because this one is optional.
+
+    // The following chunks are pointers because they're optional and can be NULL.
+    CueChunk* cue; 
+    FactChunk* fact;
 } FileInfo;
 
 // Allocates and initializes data for treating the file at the given path as the currently open file.
@@ -95,11 +116,12 @@ void SetCurrentFile(LPCTSTR);
 // Closes the current working file, deallocates info we stored about it and sets the current open file to none.
 void CloseCurrentFile();
 
+
 // Takes a path to a WAVE file and verifies that it is a WAVE file, then reads its data into memory.
 ReadWaveResult ReadWaveFile(LPCTSTR);
 
 // Locates important chunks and assigns their offsets at the given addresses. Also determines whether the wave data is a list. Returns zero iff there's a chunk that appeared more than once.
-ReadWaveResult FindImportantChunks(DWORD*, DWORD*, DWORD*);
+ReadWaveResult FindImportantChunks(DWORD*, DWORD*, DWORD*, DWORD*);
 
 // Reads the data at the given offset in the file into the format field of the FileInfo. Returns a nonzero value iff it succeeded.
 char ReadFormatChunk(DWORD);
@@ -113,6 +135,9 @@ char ReadCueChunk(DWORD);
 // Returns true iff the first element has a smaller ChunkStart than the second.
 char CuePointComparator(void*, void*);
 
+// Reads the data at the given offset in the file into the fact field of the FileInfo. Returns a nonzero value iff it succeeded.
+char ReadFactChunk(DWORD);
+
 // Checks that all the chunks that have already been read into the fileInfo are supported and in line with the specifications. Returns FILE_READ_SUCCESS iff the chunks are valid.
 ReadWaveResult ValidateFile();
 
@@ -125,16 +150,26 @@ ReadWaveResult ValidateWaveform();
 // Checks that the cue chunk is in line with the documentation. The result is FILE_READ_SUCCESS iff the chunk is ok.
 ReadWaveResult ValidateCue();
 
+// Checks that the fact chunk is in line with the documentation. The result is FILE_READ_SUCCESS iff the chunk is ok.
+ReadWaveResult ValidateFact();
+
+
+// Sets internal data about what the current file is according to the given new file creation parameters.
+void CreateNewFile(unsigned int, unsigned int, unsigned int);
+
 // Writes the modified data from memory back to the file that is currently open.
-void WriteWaveFile();
+void WriteCurrentFile();
 
 // Creates a new file with the modified data that we have in memory.
-void WriteNewWaveFile(LPCTSTR);
+void WriteCurrentFileAs(LPCTSTR);
 
 // Check if a file is new, that is it doesn't have any save location associated with it yet.
 char IsFileNew();
 
 // Returns nonzero value iff a file is currently being worked on.
 char IsFileOpen();
+
+// Occupies the array of strings with channel names. Assumes it's large enough to hold MAX_NAMED_CHANNELS strings. I don't like the 24 magic number, but we can't make this TCHAR** so this fixes a bug.
+unsigned int GetChannelNames(TCHAR[][24]);
 
 #endif

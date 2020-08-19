@@ -1,6 +1,7 @@
 CC:=gcc # C Compiler
 CFlags=-Wall -Wno-unknown-pragmas -c -Iinclude # C Compiler Flags. -Wno-unknown-pragmas gets rid of warnings about regions in the code.
 LFlags:=-Wall -mwindows # Linker Flags. -mwindows means that when you run the program it doesn't open cmd.
+LinkedLibs:=-lcomdlg32 -lksuser -lcomctl32 # comdlg32 makes open/save file dialogs work, ksuser makes the KSDATAFORMAT_SUBTYPE_PCM macro work, comctl32 makes various common controls work.
 
 .PHONY: all run runx clean unicode ansi
 
@@ -14,10 +15,8 @@ unicode: bin/fourier
 # Compiling without defining UNICODE means we're targeting ANSI.
 ansi: bin/fourier
 
-# Linking with lcomdlg32 makes open/save file dialogs work.
-# Linking with lksuser makes the KSDATAFORMAT_SUBTYPE_PCM macro work.
 bin/fourier: bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o bin/MyUtils.o
-	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o bin/MyUtils.o -lcomdlg32 -lksuser -o bin/fourier
+	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/FileManager.o bin/SoundEditor.o bin/MyUtils.o $(LinkedLibs) -o bin/fourier
 
 bin/main.o: src/main.c
 	$(CC) $(CFlags) -o bin/main.o src/main.c

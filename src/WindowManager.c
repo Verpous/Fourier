@@ -61,13 +61,9 @@
 
 #define NEW_FILE_TRACKBAR_TICKS 11 // How many ticks we want to have in a trackbar.
 
-#define MAIN_WINDOW_CLASS TEXT("MainWindow")
-#define NEW_FILE_OPTIONS_CLASS TEXT("NewFileOptions")
-#define SELECT_FILE_OPTION_CLASS TEXT("SelectFileOption")
-
-#define BUTTON_CLASS TEXT("Button")
-#define EDIT_CLASS TEXT("Edit")
-#define STATIC_CLASS TEXT("Static")
+#define WC_MAINWINDOW TEXT("MainWindow")
+#define WC_NEWFILEOPTIONS TEXT("NewFileOptions")
+#define WC_SELECTFILEOPTION TEXT("SelectFileOption")
 
 #define FILE_FILTER TEXT("Wave files (*.wav;*.wave)\0*.wav;*.wave\0")
 
@@ -82,10 +78,16 @@ char InitializeWindows(HINSTANCE instanceHandle)
     {
         return FALSE;
     }
+
+    // Loading common controls that this program uses.
+    INITCOMMONCONTROLSEX commonCtrls;
+    commonCtrls.dwSize = sizeof(INITCOMMONCONTROLSEX);
+    commonCtrls.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
+    InitCommonControlsEx(&commonCtrls);
     
     // Creates main window.
-    mainWindowHandle = CreateWindow(MAIN_WINDOW_CLASS, TEXT("Untitled - Fourier"), WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE, 600, 250, 850, 700, NULL, NULL, NULL, NULL);
-    SetWindowPos(mainWindowHandle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE); // This line fixes a bug where when child windows that spawned child windows are closed, the main window gets minimized.
+    // TODO: not sure about this CLIPSIBLINGS thing, MS says it's needed for tab controls.
+    mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled - Fourier"), WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS, 600, 250, 850, 700, NULL, NULL, NULL, NULL);
     return TRUE;
 }
 
@@ -100,7 +102,7 @@ char RegisterMainWindowClass(HINSTANCE instanceHandle)
     mainWindowClass.hbrBackground = (HBRUSH)COLOR_WINDOW;
     mainWindowClass.hCursor = LoadCursor(instanceHandle, IDC_ARROW);
     mainWindowClass.hInstance = instanceHandle;
-    mainWindowClass.lpszClassName = MAIN_WINDOW_CLASS;
+    mainWindowClass.lpszClassName = WC_MAINWINDOW;
     mainWindowClass.lpfnWndProc = MainWindowProcedure;
 
     // Registering this class. If it fails, we'll log it and end the program.
@@ -120,7 +122,7 @@ char RegisterNewFileOptionsClass(HINSTANCE instanceHandle)
     dialog.hbrBackground = (HBRUSH)COLOR_WINDOW;
     dialog.hCursor = LoadCursor(instanceHandle, IDC_CROSS);
     dialog.hInstance = instanceHandle;
-    dialog.lpszClassName = NEW_FILE_OPTIONS_CLASS;
+    dialog.lpszClassName = WC_NEWFILEOPTIONS;
     dialog.lpfnWndProc = NewFileOptionsProcedure;
 
     // Registering this class. If it fails, we'll log it and end the program.
@@ -140,7 +142,7 @@ char RegisterSelectFileOptionClass(HINSTANCE instanceHandle)
     dialog.hbrBackground = (HBRUSH)COLOR_WINDOW;
     dialog.hCursor = LoadCursor(instanceHandle, IDC_CROSS);
     dialog.hInstance = instanceHandle;
-    dialog.lpszClassName = SELECT_FILE_OPTION_CLASS;
+    dialog.lpszClassName = WC_SELECTFILEOPTION;
     dialog.lpfnWndProc = SelectFileOptionProcedure;
 
     // Registering this class. If it fails, we'll log it and end the program.
@@ -168,8 +170,17 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
         case WM_COMMAND:
             ProcessMainWindowCommand(windowHandle, wparam, lparam);
             return 0;
+        case WM_CLOSE:
+            // Prompt the user to save his progress before it is lost.
+            if (PromptSaveProgress(windowHandle))
+            {
+                // Only proceeding if the user didn't choose to abort.
+                CloseCurrentFile();
+                DestroyWindow(windowHandle);
+            }
+
+            return 0;
         case WM_DESTROY:
-            CloseCurrentFile();
             PostQuitMessage(0);
             return 0;
         default:
@@ -180,7 +191,6 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 void PaintMainWindow(HWND windowHandle)
 {
     AddMainWindowMenus(windowHandle);
-    AddMainWindowControls(windowHandle);
 }
 
 void AddMainWindowMenus(HWND windowHandle)
@@ -208,13 +218,37 @@ void AddMainWindowMenus(HWND windowHandle)
     SetMenu(windowHandle, menuHandler);
 }
 
-void AddMainWindowControls(HWND windowHandle)
+void PaintCurrentFileEditor(HWND windowHandle)
 {
+    // TODO: this is a temporary fix for cleaning the window before re-painting it. In the future I think I could do something more optimized, like only erase the parts that I have to (maybe only the channel names and graphs even).
+    static HWND tabCtrl = NULL;
+
+    if (tabCtrl != NULL)
+    {
+        DestroyWindow(tabCtrl);
+    }
+    
+    tabCtrl = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, windowHandle, NULL, NULL, NULL);
+
+    TCITEM tab;
+    tab.mask = TCIF_PARAM | TCIF_TEXT;
+
+    // This fills in the buffer with channel names, and returns how many channels were filled in.
+    TCHAR channelNames[MAX_NAMED_CHANNELS][24];
+    unsigned int numOfChannels = GetChannelNames(channelNames);
+
+    for (unsigned int i = 0; i < numOfChannels; i++)
+    {
+        tab.pszText = channelNames[i];
+        TabCtrl_InsertItem(tabCtrl, i, &tab);
+    }
+
+    HWND tabCtrlStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 5, 28, 825, 613, tabCtrl, NULL, NULL, NULL);
 }
 
 void PopSelectFileOptionDialog(HWND windowHandle)
 {
-    CreateWindow(SELECT_FILE_OPTION_CLASS, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU, 700, 450, 330, 120, windowHandle, NULL, NULL, NULL);
+    CreateWindow(WC_SELECTFILEOPTION, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU, 700, 450, 330, 120, windowHandle, NULL, NULL, NULL);
     EnableWindow(windowHandle, FALSE);
 }
 
@@ -255,7 +289,7 @@ void FileNew(HWND windowHandle)
     }
 
     newFileOptionsHandles = calloc(1, sizeof(NewFileOptionsWindow));
-    newFileOptionsHandles->handle = CreateWindow(NEW_FILE_OPTIONS_CLASS, TEXT("New File Options - Fourier"),
+    newFileOptionsHandles->handle = CreateWindow(WC_NEWFILEOPTIONS, TEXT("New File Options - Fourier"),
         WS_VISIBLE | WS_OVERLAPPED | WS_SYSMENU, 800, 500, 362, 212, windowHandle, NULL, NULL, NULL);
     newFileOptionsHandles->parent = windowHandle;
     EnableWindow(windowHandle, FALSE); // Disabling the parent because this is a modal window.
@@ -263,25 +297,10 @@ void FileNew(HWND windowHandle)
 
 void FileOpen(HWND windowHandle)
 {
-    // Giving the user a chance to save if there is unsaved progress.
-    if (HasUnsavedProgress())
+    // Giving the user a chance to save his current progress first (if there isn't any the function will take care of that).
+    if (!PromptSaveProgress(windowHandle))
     {
-        int choice = MessageBox(windowHandle,
-            TEXT("There is unsaved progress that will be lost if you proceed without saving it. Would you like to save?"),
-            TEXT("Warning"), MB_ICONWARNING | MB_YESNOCANCEL);
-
-        switch (choice)
-        {
-            case MSG_BOX_CANCEL:
-                return; // Quitting the whole function in case of cancel.
-            case MSG_BOX_NO:
-                break; // Proceeding without saving in case of no.
-            case MSG_BOX_YES:
-                FileSave(windowHandle); // Saving first in case of yes.
-                break;
-            default:
-                break;
-        }
+        return; // Aborting the file open operation if the user chose it in the prompt.
     }
 
     // Now proceeding with opening a new file.
@@ -299,12 +318,48 @@ void FileOpen(HWND windowHandle)
     if (GetOpenFileName(&ofn))
     {
         ReadWaveResult result = ReadWaveFile(filename);
-        LPTSTR messageText = NULL;
 
-        switch (ReadWaveResultCode(result))
+        if (ResultHasError(result))
         {
-            case FILE_READ_SUCCESS:
-                if (ResultHasWarning(result))
+            LPTSTR messageText = NULL;
+
+            switch (ResultErrorCode(result))
+            {
+                case FILE_CANT_OPEN:
+                    messageText = TEXT("The file could not be opened. It may be open in another program.");
+                    break;
+                case FILE_NOT_WAVE:
+                    messageText = TEXT("The file is not a WAVE file.");
+                    break;
+                case FILE_BAD_WAVE:
+                    messageText = TEXT("The file is not entirely compliant with the WAVE format specifications.");
+                    break;
+                case FILE_BAD_FORMAT:
+                    messageText = TEXT("The file uses an unsupported audio format.");
+                    break;
+                case FILE_BAD_BITDEPTH:
+                    messageText = TEXT("The file uses an unsupported bit depth.");
+                    break;
+                case FILE_BAD_FREQUENCY:
+                    messageText = TEXT("The file uses an unsupported sample rate.");
+                    break;
+                case FILE_BAD_SIZE:
+                    messageText = TEXT("The file's actual size does not match up with what it should be.");
+                    break;
+                case FILE_MISC_ERROR:
+                    messageText = TEXT("A miscellaneous error occured.");
+                    break;
+                default:
+                    break;
+            }
+
+            MessageBox(windowHandle, messageText, NULL, MB_OK | MB_ICONERROR);
+        }
+        else // No error.
+        {
+            if (ResultHasWarning(result))
+            {
+                if (ResultWarningCode(result) & FILE_CHUNK_WARNING)
                 {
                     int choice = MessageBox(windowHandle,
                         TEXT("The file contains some information which is ignored by this program, which may lead to unexpected results."),
@@ -316,41 +371,25 @@ void FileOpen(HWND windowHandle)
                         return;
                     }
                 }
-                
-                // TODO: paint main window with stuff from the file.
 
-                return;
-            case FILE_CANT_OPEN:
-                messageText = TEXT("The file could not be opened. It may be open in another program.");
-                break;
-            case FILE_NOT_WAVE:
-                messageText = TEXT("The file is not a WAVE file.");
-                break;
-            case FILE_BAD_WAVE:
-                messageText = TEXT("The file is not entirely compliant with the WAVE format specifications.");
-                break;
-            case FILE_BAD_FORMAT:
-                messageText = TEXT("The file uses an unsupported audio format.");
-                break;
-            case FILE_BAD_BITDEPTH:
-                messageText = TEXT("The file uses an unsupported bit depth.");
-                break;
-            case FILE_BAD_FREQUENCY:
-                messageText = TEXT("The file uses an unsupported sample rate.");
-                break;
-            case FILE_BAD_SIZE:
-                messageText = TEXT("The file's actual size does not match up with what it should be.");
-                break;
-            case FILE_MISC_ERROR:
-                messageText = TEXT("A miscellaneous error occured.");
-                break;
-            default:
-                break;
+                if (ResultWarningCode(result) & FILE_CHAN_WARNING)
+                {
+                    int choice = MessageBox(windowHandle,
+                        TEXT("The file contains more channels than this program supports. You will only be able to edit some of the channels."),
+                        TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
+                    
+                    if (choice == MSG_BOX_CANCEL)
+                    {
+                        CloseCurrentFile();
+                        return;
+                    }
+                }
+            }
+            
+            PaintCurrentFileEditor(mainWindowHandle);
         }
-
-        MessageBox(windowHandle, messageText, NULL, MB_OK | MB_ICONERROR);
     }
-    else
+    else // GetOpenFileName failed.
     {
         DWORD error = CommDlgExtendedError();
         fprintf(stderr, "GetOpenFileName failed with error code %lX\n", error);
@@ -370,7 +409,7 @@ void FileSave(HWND windowHandle)
     }
     else
     {
-        WriteWaveFile();
+        WriteCurrentFile();
     }
 }
 
@@ -388,7 +427,7 @@ void FileSaveAs(HWND windowHandle)
 
     if (GetSaveFileName(&ofn))
     {
-        WriteNewWaveFile(filename);
+        WriteCurrentFileAs(filename);
     }
     else
     {
@@ -400,6 +439,32 @@ void FileSaveAs(HWND windowHandle)
             MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH)) TEXT(" characters."), NULL, MB_OK | MB_ICONERROR);
         }
     }
+}
+
+char PromptSaveProgress(HWND windowHandle)
+{
+    if (HasUnsavedProgress())
+    {
+        int choice = MessageBox(windowHandle,
+            TEXT("There is unsaved progress that will be lost if you proceed without saving it. Would you like to save?"),
+            TEXT("Warning"), MB_ICONWARNING | MB_YESNOCANCEL);
+
+        switch (choice)
+        {
+            case MSG_BOX_CANCEL:
+                return FALSE; // Returning that the program short abort the operation that prompted this.
+            case MSG_BOX_NO:
+                break; // Proceeding without saving in case of no.
+            case MSG_BOX_YES:
+                FileSave(windowHandle); // Saving first in case of yes.
+                break;
+            default:
+                break;
+        }
+    }
+
+    // Returning that the program should continue the operation that prompted this.
+    return TRUE;
 }
 
 #pragma endregion // MainWindow.
@@ -449,15 +514,15 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
         55, FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_FREQUENCY)), TEXT("Hz"));
 
     // Adding a radio menu for choosing bit depth. Important that we add these such that the i'th cell indicates i+1 bytes.
-    newFileOptionsHandles->depthOptions[0] = CreateWindow(BUTTON_CLASS, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 18, 95, 80, 30, windowHandle, NULL, NULL, NULL);
-    newFileOptionsHandles->depthOptions[1] = CreateWindow(BUTTON_CLASS, TEXT("16-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 98, 95, 80, 30, windowHandle, NULL, NULL, NULL);
-    newFileOptionsHandles->depthOptions[2] = CreateWindow(BUTTON_CLASS, TEXT("24-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 178, 95, 80, 30, windowHandle, NULL, NULL, NULL);
-    newFileOptionsHandles->depthOptions[3] = CreateWindow(BUTTON_CLASS, TEXT("32-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 258, 95, 80, 30, windowHandle, NULL, NULL, NULL);
+    newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 18, 95, 80, 30, windowHandle, NULL, NULL, NULL);
+    newFileOptionsHandles->depthOptions[1] = CreateWindow(WC_BUTTON, TEXT("16-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 98, 95, 80, 30, windowHandle, NULL, NULL, NULL);
+    newFileOptionsHandles->depthOptions[2] = CreateWindow(WC_BUTTON, TEXT("24-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 178, 95, 80, 30, windowHandle, NULL, NULL, NULL);
+    newFileOptionsHandles->depthOptions[3] = CreateWindow(WC_BUTTON, TEXT("32-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 258, 95, 80, 30, windowHandle, NULL, NULL, NULL);
     SendMessage(newFileOptionsHandles->depthOptions[1], BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
 
     // Adding buttons for ok and cancel.
-    CreateWindow(BUTTON_CLASS, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 198, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_CANCEL, NULL, NULL);
-    CreateWindow(BUTTON_CLASS, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 278, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_OK, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 198, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_CANCEL, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 278, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_OK, NULL, NULL);
 }
 
 void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units)
@@ -476,9 +541,9 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
     SendMessage(*trackbar, TBM_SETTICFREQ, tickLength, 0); // Configuring how many ticks are on it.
 
     // Adding textbox.
-    *textbox = CreateWindow(EDIT_CLASS, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 220, yPos + 4, 65, 22, windowHandle, NULL, NULL, NULL);
+    *textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 220, yPos + 4, 65, 22, windowHandle, NULL, NULL, NULL);
     SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-    CreateWindow(STATIC_CLASS, units, WS_VISIBLE | WS_CHILD, 290, yPos + 6, 60, 22, windowHandle, NULL, NULL, NULL);
+    CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, 290, yPos + 6, 60, 22, windowHandle, NULL, NULL, NULL);
 }
 
 void CloseNewFileOptions(HWND windowHandle)
@@ -494,7 +559,7 @@ void ApplyNewFileOptions(HWND windowHandle)
 {
     // Getting file length. If it's not within the legal range we pop an error message (although I think that shouldn't be possible).
     // Even though there's both a trackbar and a textbox, we read from the trackbar because they're supposed to be in sync anyway and the trackbar gives us an int directly + enforces the range limits.
-    int length = (int)SendMessage(newFileOptionsHandles->lengthTrackbar, TBM_GETPOS, 0, 0);
+    unsigned int length = (unsigned int)SendMessage(newFileOptionsHandles->lengthTrackbar, TBM_GETPOS, 0, 0);
 
     if (!(FILE_MIN_LENGTH <= length && length <= FILE_MAX_LENGTH))
     {
@@ -503,7 +568,7 @@ void ApplyNewFileOptions(HWND windowHandle)
     }
 
     // Getting the sample rate same as we did with file length.
-    int frequency = (int)SendMessage(newFileOptionsHandles->frequencyTrackbar, TBM_GETPOS, 0, 0);
+    unsigned int frequency = (unsigned int)SendMessage(newFileOptionsHandles->frequencyTrackbar, TBM_GETPOS, 0, 0);
     
     if (!(FILE_MIN_FREQUENCY <= frequency && frequency <= FILE_MAX_FREQUENCY))
     {
@@ -512,9 +577,9 @@ void ApplyNewFileOptions(HWND windowHandle)
     }
 
     // Getting the bit depth (as byte depth because it works better with the algorithm). The i'th cell in the array indicates i+1 byte depth. We assume the first cell is selected and only check the rest.
-    int byteDepth = 1;
+    unsigned int byteDepth = 1;
 
-    for (int i = 1; i < 4; i++)
+    for (unsigned int i = 1; i < 4; i++)
     {
         if (SendMessage(newFileOptionsHandles->depthOptions[i], BM_GETCHECK, 0, 0) == BST_CHECKED)
         {
@@ -523,9 +588,14 @@ void ApplyNewFileOptions(HWND windowHandle)
         }
     }
 
-    // TODO: pass this data to the FileManager or SoundEditor for actually creating the new file. Also delete this next line, it's only to temporarily make a warning go away.
-    if (byteDepth) {}
-    CloseNewFileOptions(windowHandle);
+    // Giving the user a chance to save if there is unsaved progress.
+    if (PromptSaveProgress(windowHandle))
+    {
+        // Proceeding with creating a new file only if the user didn't choose to abort.
+        CreateNewFile(length, frequency, byteDepth);
+        PaintCurrentFileEditor(mainWindowHandle);
+        CloseNewFileOptions(windowHandle);
+    }
 }
 
 void ProcessNewFileOptionsCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
@@ -612,11 +682,11 @@ LRESULT CALLBACK SelectFileOptionProcedure(HWND windowHandle, UINT msg, WPARAM w
 void PaintSelectFileOptionWindow(HWND windowHandle)
 {
     // Adding text with the prompt description.
-    CreateWindow(STATIC_CLASS, TEXT("Create a new file or open an existing one?"), WS_VISIBLE | WS_CHILD | SS_CENTER, 0, 15, 330, 30, windowHandle, NULL, NULL, NULL);
+    CreateWindow(WC_STATIC, TEXT("Create a new file or open an existing one?"), WS_VISIBLE | WS_CHILD | SS_CENTER, 0, 15, 330, 30, windowHandle, NULL, NULL, NULL);
 
     // Adding buttons for new file and open file.
-    CreateWindow(BUTTON_CLASS, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 85, 50, 70, 35, windowHandle, (HMENU)FILE_MENU_NEW, NULL, NULL);
-    CreateWindow(BUTTON_CLASS, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 175, 50, 70, 35, windowHandle, (HMENU)FILE_MENU_OPEN, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 85, 50, 70, 35, windowHandle, (HMENU)FILE_MENU_NEW, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 175, 50, 70, 35, windowHandle, (HMENU)FILE_MENU_OPEN, NULL, NULL);
 }
 
 void CloseSelectFileOption(HWND windowHandle)

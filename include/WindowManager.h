@@ -42,6 +42,9 @@ void AddMainWindowMenus(HWND);
 // Paints controls that we want to have when the program starts.
 void AddMainWindowControls(HWND);
 
+// Paints all the GUI for editing the open file onto the main window.
+void PaintCurrentFileEditor(HWND);
+
 // Displays the dialog for selecting a file option.
 void PopSelectFileOptionDialog(HWND);
 
@@ -59,6 +62,9 @@ void FileSave(HWND);
 
 // Prompts the user to select a save location for the edited file, and saves it there.
 void FileSaveAs(HWND);
+
+// Prompts the user to choose if he wants to save his progress before it's lost. Returns zero iff the user chose to abort the operation that was about to cause progress to be lost.
+char PromptSaveProgress();
 
 
 // Handler for any messages sent to the new file options dialog.
