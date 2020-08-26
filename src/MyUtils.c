@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#include "MyUtils.h"
+#include "MyUtilsInternal.h"
 #include <stdlib.h>
 
 int RandRange(int min, int max)
@@ -84,4 +84,9 @@ int Partition(void* arr, int low, int high, char (*comparator)(void*, void*), si
 
     Swap(arr + ((i + 1) * size), pivot, size); 
     return (i + 1);
+}
+
+char IsPowerOfTwo(unsigned long long n)
+{
+    return (n != 0) && ((n & (n - 1)) == 0);
 }

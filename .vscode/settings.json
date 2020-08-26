@@ -1,0 +1,17 @@
+{
+    "files.associations": {
+        "random": "c",
+        "complex": "cpp",
+        "string_view": "cpp",
+        "array": "c",
+        "compare": "c",
+        "functional": "c",
+        "istream": "c",
+        "ostream": "c",
+        "ranges": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c",
+        "limits": "c"
+    }
+}

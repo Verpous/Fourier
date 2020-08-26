@@ -16,13 +16,13 @@
 
 #include "WindowManager.h"
 #include "SoundEditor.h"
-#include "FileManager.h"
 #include <stdio.h> // For printing errors and such.
 #include <commctrl.h> // For some trackbar-related things.
 #include <tchar.h> // For dealing with unicode and ANSI strings.
+#include <shlwapi.h> // For PathStipPath.
 
 // Turns any text you give it into a string.
-#define Stringify(x) #x 
+#define Stringify(x) #x
 
 // Like stringify, but it will stringify macro values instead of names if you give it a macro.
 #define XStringify(x) Stringify(x)
@@ -30,14 +30,20 @@
 // Takes a notification code and returns it as an HMENU that uses the high word so it words the same as system notification codes.
 #define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
 
-#define FILE_MENU_NEW 1
-#define FILE_MENU_OPEN 2
-#define FILE_MENU_SAVE 3
-#define FILE_MENU_SAVEAS 4
-#define FILE_MENU_EXIT 5
+// The following are notification codes. Codes below 0x8000 are reserved.
+#define FILE_MENU_NEW 0x8001
+#define FILE_MENU_OPEN 0x8002
+#define FILE_MENU_SAVE 0x8003
+#define FILE_MENU_SAVEAS 0x8004
+#define FILE_MENU_EXIT 0x8005
 
-#define EDIT_MENU_UNDO 6
-#define EDIT_MENU_REDO 7
+#define EDIT_MENU_UNDO 0x8006
+#define EDIT_MENU_REDO 0x8007
+
+// The following are control identifiers. They don't have to be above 0x8000.
+#define FILE_EDITOR_UNDO 1
+#define FILE_EDITOR_REDO 2
+#define FILE_EDITOR_APPLY 3
 
 #define NEW_FILE_OPTIONS_OK 1
 #define NEW_FILE_OPTIONS_CANCEL 2
@@ -55,9 +61,18 @@
 #define LENGTH_TRACKBAR_PAGESIZE 60
 
 // Frequency is measured in Hertz.
+#define FILE_MIN_FREQUENCY 8000
+#define FILE_MAX_FREQUENCY 96000
 #define NEW_FILE_DEFAULT_FREQUENCY 44100
 #define FREQUENCY_TRACKBAR_LINESIZE 50
 #define FREQUENCY_TRACKBAR_PAGESIZE 1000
+
+// Smoothing region is also in hertz.
+#define MIN_SMOOTHING_REGION 1
+#define MAX_SMOOTHING_REGION 1000 // TODO: make unlimited? or dependent on frequency of file? or keep as is?
+#define DEFAULT_SMOOTHING_REGION 250
+#define SMOOTHING_REGION_TRACKBAR_LINESIZE 5
+#define SMOOTHING_REGION_TRACKBAR_PAGESIZE 50
 
 #define NEW_FILE_TRACKBAR_TICKS 11 // How many ticks we want to have in a trackbar.
 
@@ -66,9 +81,11 @@
 #define WC_SELECTFILEOPTION TEXT("SelectFileOption")
 
 #define FILE_FILTER TEXT("Wave files (*.wav;*.wave)\0*.wav;*.wave\0")
+#define TITLE_POSTFIX TEXT(" - Fourier")
 
 static HWND mainWindowHandle = NULL;
 static NewFileOptionsWindow* newFileOptionsHandles = NULL;
+static FileEditor fileEditor = {0};
 
 #pragma region Initialization
 
@@ -87,7 +104,7 @@ char InitializeWindows(HINSTANCE instanceHandle)
     
     // Creates main window.
     // TODO: not sure about this CLIPSIBLINGS thing, MS says it's needed for tab controls.
-    mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled - Fourier"), WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS, 600, 250, 850, 700, NULL, NULL, NULL, NULL);
+    mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled") TITLE_POSTFIX, WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS, 600, 250, 850, 700, NULL, NULL, NULL, NULL);
     return TRUE;
 }
 
@@ -170,12 +187,20 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
         case WM_COMMAND:
             ProcessMainWindowCommand(windowHandle, wparam, lparam);
             return 0;
+        case WM_HSCROLL:
+            // Updating the textbox to match the trackbar.
+            if (fileEditor.smoothingRangeTrackbar == (HWND)lparam)
+            {
+                SyncTextboxToTrackbar(fileEditor.smoothingRangeTrackbar, fileEditor.smoothingRangeTextbox);
+            }
+
+            return 0;
         case WM_CLOSE:
             // Prompt the user to save his progress before it is lost.
             if (PromptSaveProgress(windowHandle))
             {
                 // Only proceeding if the user didn't choose to abort.
-                CloseCurrentFile();
+                CloseWaveFile(&(fileEditor.fileInfo));
                 DestroyWindow(windowHandle);
             }
 
@@ -228,6 +253,23 @@ void PaintCurrentFileEditor(HWND windowHandle)
         DestroyWindow(tabCtrl);
     }
     
+    // Updating the window title to the open file's name.
+    if (IsFileNew(fileEditor.fileInfo))
+    {
+        SetWindowText(windowHandle, TEXT("Untitled") TITLE_POSTFIX);
+    }
+    else
+    {
+        // Extracting the file name from the full path, and appending " - Fourier".
+        // I decided not to impose a length limit because I fear cutting a unicode string in the middle might ruin it. Worst comes to worst, users get a long ass string at the top of the screen.
+        unsigned int len = _tcslen(fileEditor.fileInfo->path);
+        TCHAR pathCopy[len + _tcslen(TITLE_POSTFIX) + 1]; // Allocating enough for the path name, the postfix, and the null terminator.
+        _tcscpy(pathCopy, fileEditor.fileInfo->path);
+        PathStripPath(pathCopy);
+        _tcscat(pathCopy, TITLE_POSTFIX);
+        SetWindowText(windowHandle, pathCopy);
+    }
+
     tabCtrl = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, windowHandle, NULL, NULL, NULL);
 
     TCITEM tab;
@@ -235,7 +277,7 @@ void PaintCurrentFileEditor(HWND windowHandle)
 
     // This fills in the buffer with channel names, and returns how many channels were filled in.
     TCHAR channelNames[MAX_NAMED_CHANNELS][24];
-    unsigned int numOfChannels = GetChannelNames(channelNames);
+    unsigned int numOfChannels = GetChannelNames(fileEditor.fileInfo, channelNames);
 
     for (unsigned int i = 0; i < numOfChannels; i++)
     {
@@ -243,7 +285,41 @@ void PaintCurrentFileEditor(HWND windowHandle)
         TabCtrl_InsertItem(tabCtrl, i, &tab);
     }
 
-    HWND tabCtrlStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 5, 28, 825, 613, tabCtrl, NULL, NULL, NULL);
+    // Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
+    HWND tabCtrlStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, windowHandle, NULL, NULL, NULL);
+
+    // Adding GUI for choosing what frequency to modify.
+    CreateWindow(WC_STATIC, TEXT("Frequency:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, windowHandle, NULL, NULL, NULL);
+
+    fileEditor.frequencyTextbox = CreateWindow(WC_EDIT, TEXT("0"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 130, 428, 65, 22, windowHandle, NULL, NULL, NULL);
+    SendMessage(fileEditor.frequencyTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+    CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 430, 60, 22, windowHandle, NULL, NULL, NULL);
+
+    // Adding GUI for choosing what change to apply.
+    CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 475, 80, 22, windowHandle, NULL, NULL, NULL);
+
+    // Adding a radio menu for choosing between multiply and add modes.
+    fileEditor.multiplyRadio = CreateWindow(WC_BUTTON, TEXT("Multiply"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 110, 470, 80, 30, windowHandle, NULL, NULL, NULL);
+    fileEditor.addRadio = CreateWindow(WC_BUTTON, TEXT("Add"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 190, 470, 50, 30, windowHandle, NULL, NULL, NULL);
+    SendMessage(fileEditor.multiplyRadio, BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
+
+    fileEditor.changeTextbox = CreateWindow(WC_EDIT, TEXT("1"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 250, 473, 65, 22, windowHandle, NULL, NULL, NULL);
+    SetWindowSubclass(fileEditor.changeTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
+    SendMessage(fileEditor.changeTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+
+    // Adding GUI for choosing how much smoothing to apply.
+    CreateWindow(WC_STATIC, TEXT("Smoothing region:"), WS_VISIBLE | WS_CHILD, 50, 520, 130, 22, windowHandle, NULL, NULL, NULL);
+    AddTrackbarWithTextbox(windowHandle, &(fileEditor.smoothingRangeTrackbar), &(fileEditor.smoothingRangeTextbox), 170, 520,
+        MIN_SMOOTHING_REGION, MAX_SMOOTHING_REGION, DEFAULT_SMOOTHING_REGION, SMOOTHING_REGION_TRACKBAR_LINESIZE, SMOOTHING_REGION_TRACKBAR_PAGESIZE, TEXT(XStringify(DEFAULT_SMOOTHING_REGION)), TEXT("Hz"));
+    
+    // The trackbar for some reason was rendered behind other stuff. This makes it render above.
+    BringWindowToTop(fileEditor.smoothingRangeTrackbar);
+
+    // Adding buttons for ok and cancel.
+    // TODO: I'm considering moving these buttons to the center of the screen (horizontally).
+    CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 595, 598, 70, 35, windowHandle, (HMENU)FILE_EDITOR_UNDO, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 675, 598, 70, 35, windowHandle, (HMENU)FILE_EDITOR_REDO, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, windowHandle, (HMENU)FILE_EDITOR_APPLY, NULL, NULL);
 }
 
 void PopSelectFileOptionDialog(HWND windowHandle)
@@ -256,6 +332,32 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 {
     switch (HIWORD(wparam))
     {
+        case BN_CLICKED:
+            switch (LOWORD(wparam))
+            {
+                case FILE_EDITOR_REDO:
+                    fprintf(stderr, "REDO!\n");
+                    break;
+                case FILE_EDITOR_UNDO:
+                    break;
+                case FILE_EDITOR_APPLY:
+                    break;
+            }
+
+            break;
+        case EN_UPDATE: // EN_UPDATE is sent before the screen gets updated, EN_CHANGE gets sent after.
+            ;
+            HWND focusedWindow = GetFocus();
+            HWND controlHandle = (HWND)lparam;
+
+            // Only matching the trackbar to the textbox when it's in fact the textbox that changed,
+            // and when the textbox is in focus to avoid the fact that when I programmatically update the textbox due to trackbar movement, it then fires this event.
+            if (focusedWindow == fileEditor.smoothingRangeTextbox && controlHandle == fileEditor.smoothingRangeTextbox)
+            {
+                SyncTrackbarToTextbox(fileEditor.smoothingRangeTrackbar, fileEditor.smoothingRangeTextbox);
+            }
+
+            break;
         case FILE_MENU_NEW:
             FileNew(windowHandle);
             break;
@@ -317,7 +419,7 @@ void FileOpen(HWND windowHandle)
 
     if (GetOpenFileName(&ofn))
     {
-        ReadWaveResult result = ReadWaveFile(filename);
+        ReadWaveResult result = ReadWaveFile(&(fileEditor.fileInfo), filename);
 
         if (ResultHasError(result))
         {
@@ -346,10 +448,12 @@ void FileOpen(HWND windowHandle)
                 case FILE_BAD_SIZE:
                     messageText = TEXT("The file's actual size does not match up with what it should be.");
                     break;
-                case FILE_MISC_ERROR:
-                    messageText = TEXT("A miscellaneous error occured.");
+                case FILE_BAD_SAMPLES:
+                    messageText = TEXT("The file exceeds the maximum number of samples allowed by this program.");
                     break;
+                case FILE_MISC_ERROR:
                 default:
+                    messageText = TEXT("A miscellaneous error occured.");
                     break;
             }
 
@@ -367,7 +471,7 @@ void FileOpen(HWND windowHandle)
                     
                     if (choice == MSG_BOX_CANCEL)
                     {
-                        CloseCurrentFile();
+                        CloseWaveFile(&(fileEditor.fileInfo));
                         return;
                     }
                 }
@@ -380,7 +484,7 @@ void FileOpen(HWND windowHandle)
                     
                     if (choice == MSG_BOX_CANCEL)
                     {
-                        CloseCurrentFile();
+                        CloseWaveFile(&(fileEditor.fileInfo));
                         return;
                     }
                 }
@@ -403,13 +507,13 @@ void FileOpen(HWND windowHandle)
 
 void FileSave(HWND windowHandle)
 {
-    if (IsFileNew())
+    if (IsFileNew(fileEditor.fileInfo))
     {
         FileSaveAs(windowHandle);
     }
     else
     {
-        WriteCurrentFile();
+        WriteWaveFile(fileEditor.fileInfo);
     }
 }
 
@@ -427,7 +531,7 @@ void FileSaveAs(HWND windowHandle)
 
     if (GetSaveFileName(&ofn))
     {
-        WriteCurrentFileAs(filename);
+        WriteWaveFileAs(fileEditor.fileInfo, filename);
     }
     else
     {
@@ -506,12 +610,12 @@ LRESULT CALLBACK NewFileOptionsProcedure(HWND windowHandle, UINT msg, WPARAM wpa
 void PaintNewFileOptionsWindow(HWND windowHandle)
 {
    // Adding trackbar-textbox-units triple for selecting file length.
-    AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox),
-        10, FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_LENGTH)), TEXT("seconds"));
+    AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox), 10, 16,
+        FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_LENGTH)), TEXT("seconds"));
 
     // Adding trackbar-textbox-units triple for selecting file sample rate.
-    AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox),
-        55, FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_FREQUENCY)), TEXT("Hz"));
+    AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox), 10, 61,
+        FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_FREQUENCY)), TEXT("Hz"));
 
     // Adding a radio menu for choosing bit depth. Important that we add these such that the i'th cell indicates i+1 bytes.
     newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 18, 95, 80, 30, windowHandle, NULL, NULL, NULL);
@@ -523,27 +627,6 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
     // Adding buttons for ok and cancel.
     CreateWindow(WC_BUTTON, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 198, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_CANCEL, NULL, NULL);
     CreateWindow(WC_BUTTON, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 278, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_OK, NULL, NULL);
-}
-
-void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units)
-{
-    // Calculating tick length given the interval length and how many ticks we want to have. Rounding it up instead of down because I would rather have too few ticks than too many.
-    div_t divResult = div(maxValue - minValue, NEW_FILE_TRACKBAR_TICKS);
-    WPARAM tickLength = divResult.quot + (divResult.rem ? 1 : 0);
-
-    // Adding trackbar.
-    *trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, 10, yPos, 200, 30, windowHandle, 0, NULL, NULL);
-    SendMessage(*trackbar, TBM_SETRANGEMIN, (WPARAM)FALSE, (LPARAM)minValue); // Configuring min range of trackbar.
-    SendMessage(*trackbar, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)maxValue); // Configuring max range of trackbar.
-    SendMessage(*trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)defaultValue); // Configuring default selection.
-    SendMessage(*trackbar, TBM_SETLINESIZE, 0, (LPARAM)linesize); // Configuring sensitivity for arrow key inputs.
-    SendMessage(*trackbar, TBM_SETPAGESIZE, 0, (LPARAM)pagesize); // Configuring sensitivity for PGUP/PGDOWN inputs.
-    SendMessage(*trackbar, TBM_SETTICFREQ, tickLength, 0); // Configuring how many ticks are on it.
-
-    // Adding textbox.
-    *textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 220, yPos + 4, 65, 22, windowHandle, NULL, NULL, NULL);
-    SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-    CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, 290, yPos + 6, 60, 22, windowHandle, NULL, NULL, NULL);
 }
 
 void CloseNewFileOptions(HWND windowHandle)
@@ -591,10 +674,19 @@ void ApplyNewFileOptions(HWND windowHandle)
     // Giving the user a chance to save if there is unsaved progress.
     if (PromptSaveProgress(windowHandle))
     {
+        // Storing this because the pointer to it will be deallocated by CloseNewFileOptions.
+        HWND parent = newFileOptionsHandles->parent;
+
         // Proceeding with creating a new file only if the user didn't choose to abort.
-        CreateNewFile(length, frequency, byteDepth);
+        CreateNewFile(&(fileEditor.fileInfo), length, frequency, byteDepth);
         PaintCurrentFileEditor(mainWindowHandle);
         CloseNewFileOptions(windowHandle);
+
+        // This is a bandage fix but I can't come up with a better way to have the select file option menu close when you create a new file.
+        if (parent != mainWindowHandle)
+        {
+            CloseSelectFileOption(parent);
+        }
     }
 }
 
@@ -616,7 +708,7 @@ void ProcessNewFileOptionsCommand(HWND windowHandle, WPARAM wparam, LPARAM lpara
             }
             
             break;
-        case EN_CHANGE:
+        case EN_UPDATE: // EN_UPDATE is sent before the screen gets updated, EN_CHANGE gets sent after.
             ;
             HWND focusedWindow = GetFocus();
             HWND controlHandle = (HWND)lparam;
@@ -636,25 +728,6 @@ void ProcessNewFileOptionsCommand(HWND windowHandle, WPARAM wparam, LPARAM lpara
         default:
             break;
     }   
-}
-
-void SyncTextboxToTrackbar(HWND trackbar, HWND textbox)
-{
-    int length = (int)SendMessage(trackbar, TBM_GETPOS, 0, 0);
-    TCHAR lengthStr[16];
-    _itot(length, lengthStr, 10);
-    SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)lengthStr);
-}
-
-void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
-{
-    TCHAR buffer[16];
-    SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
-    unsigned long int length = _tcstoul(buffer, NULL, 10);
-    int min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
-    int max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
-    length = length > max ? max : (length < min ? min : length); // Clamping length between min and max.
-    SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)length);
 }
 
 #pragma endregion // NewFileOptions.
@@ -712,7 +785,7 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
                     FileOpen(windowHandle);
 
                     // If the FileOpen operation was a success, closing this menu.
-                    if (IsFileOpen())
+                    if (IsFileOpen(fileEditor.fileInfo))
                     {
                         CloseSelectFileOption(windowHandle);
                     }
@@ -729,3 +802,74 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 }
 
 #pragma endregion // SelectFileOption.
+
+#pragma region Misc
+
+void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units)
+{
+    // Calculating tick length given the interval length and how many ticks we want to have. Rounding it up instead of down because I would rather have too few ticks than too many.
+    div_t divResult = div(maxValue - minValue, NEW_FILE_TRACKBAR_TICKS);
+    WPARAM tickLength = divResult.quot + (divResult.rem ? 1 : 0);
+
+    // Adding trackbar.
+    *trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, xPos, yPos - 6, 200, 30, windowHandle, 0, NULL, NULL);
+    SendMessage(*trackbar, TBM_SETRANGEMIN, (WPARAM)FALSE, (LPARAM)minValue); // Configuring min range of trackbar.
+    SendMessage(*trackbar, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)maxValue); // Configuring max range of trackbar.
+    SendMessage(*trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)defaultValue); // Configuring default selection.
+    SendMessage(*trackbar, TBM_SETLINESIZE, 0, (LPARAM)linesize); // Configuring sensitivity for arrow key inputs.
+    SendMessage(*trackbar, TBM_SETPAGESIZE, 0, (LPARAM)pagesize); // Configuring sensitivity for PGUP/PGDOWN inputs.
+    SendMessage(*trackbar, TBM_SETTICFREQ, tickLength, 0); // Configuring how many ticks are on it.
+
+    // Adding textbox.
+    *textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, xPos + 210, yPos - 2, 65, 22, windowHandle, NULL, NULL, NULL);
+    SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+    CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, xPos + 280, yPos, 60, 22, windowHandle, NULL, NULL, NULL);
+}
+
+void SyncTextboxToTrackbar(HWND trackbar, HWND textbox)
+{
+    int length = (int)SendMessage(trackbar, TBM_GETPOS, 0, 0);
+    TCHAR lengthStr[16];
+    _itot(length, lengthStr, 10);
+    SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)lengthStr);
+}
+
+void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
+{
+    TCHAR buffer[16];
+    unsigned long int length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
+    int min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
+    int max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
+    length = length > max ? max : (length < min ? min : length); // Clamping length between min and max.
+    SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)length);
+}
+
+LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR subclassId, DWORD_PTR refData)
+{
+    switch (msg)
+    {
+        case WM_CHAR:
+            // If the character isn't a digit or a dot, rejecting it.
+            if (!(('0' <= wparam && wparam <= '9') ||  wparam == '.' ||
+                wparam == '\r' || wparam == '\b' || wparam == '\x03' || wparam == '\x16' || wparam == '\x18')) // ASCII codes for carriage return, backspace, ctrl+c, ctrl+v, ctrl+x.
+            {
+                return 0;
+            }
+            else if (wparam == '.') // If the digit is a dot, we want to check if there already is one.
+            {
+                TCHAR buffer[16];
+                SendMessage(windowHandle, WM_GETTEXT, 16, (LPARAM)buffer);
+
+                // _tcschr finds the first occurence of a character and returns NULL if it wasn't found. Rejecting this input if it found a dot.
+                if (_tcschr(buffer, TEXT('.')) != NULL)
+                {
+                    return 0;
+                }
+            }
+
+        default:
+            return DefSubclassProc(windowHandle, msg, wparam, lparam);
+    }
+}
+
+#pragma endregion // Misc.

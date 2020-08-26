@@ -1,6 +1,7 @@
 #ifndef WINDOWS_MANAGER_H
 #define WINDOWS_MANAGER_H
 
+#include "WaveReadWriter.h"
 #include <windows.h> // Do I need to explain why this is included?
 
 typedef struct NewFileOptionsWindow
@@ -13,6 +14,17 @@ typedef struct NewFileOptionsWindow
     HWND frequencyTextbox;
     HWND depthOptions[4];
 } NewFileOptionsWindow;
+
+typedef struct FileEditor
+{   
+    FileInfo* fileInfo;
+    HWND frequencyTextbox;
+    HWND changeTextbox;
+    HWND addRadio;
+    HWND multiplyRadio;
+    HWND smoothingRangeTrackbar;
+    HWND smoothingRangeTextbox;
+} FileEditor;
 
 
 // Registers classes and creates the main window.
@@ -76,9 +88,6 @@ void PaintNewFileOptionsWindow(HWND);
 // Paints controls that go into the new file options window.
 void AddNewFileOptionsControls(HWND);
 
-// Paints a trackbar-textbox-units triple with the given parameters.
-void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, LPCTSTR, LPCTSTR);
-
 // Closes the new file options window and re-enables its parent.
 void CloseNewFileOptions(HWND);
 
@@ -87,12 +96,6 @@ void ApplyNewFileOptions(HWND);
 
 // Processes any WM_COMMAND message the new file window may receive.
 void ProcessNewFileOptionsCommand(HWND, WPARAM, LPARAM);
-
-// Sets the length textbox to the number selected in the trackbar.
-void SyncTextboxToTrackbar(HWND, HWND);
-
-// Sets the length trackbar to the value written in the textbox.
-void SyncTrackbarToTextbox(HWND, HWND);
 
 
 // Handler for any messages sent to the new file options dialog.
@@ -106,5 +109,18 @@ void CloseSelectFileOption(HWND);
 
 // Processes any WM_COMMAND message sent to the select file option window.
 void ProcessSelectFileOptionCommand(HWND, WPARAM, LPARAM);
+
+
+// Paints a trackbar-textbox-units triple with the given parameters.
+void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, int, LPCTSTR, LPCTSTR);
+
+// Sets the length textbox to the number selected in the trackbar.
+void SyncTextboxToTrackbar(HWND, HWND);
+
+// Sets the length trackbar to the value written in the textbox.
+void SyncTrackbarToTextbox(HWND, HWND);
+
+// Procedure for textboxes that only accept float numbers.
+LRESULT CALLBACK FloatTextboxWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 #endif

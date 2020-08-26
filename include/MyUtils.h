@@ -1,7 +1,15 @@
 #include <windows.h>
 
+#define KILOBYTE (1 << 10)
+#define MEGABYTE (1 << 20)
+#define GIGABYTE (1 << 30)
+
+#define KILOBYTES(k) (k * KILOBYTE)
+#define MEGABYTES(k) (k * MEGABYTE)
+#define GIGABYTES(k) (k * GIGABYTE)
+
 // Returns a random int in the range [min, max)
-int RandRange(int min, int max);
+int RandRange(int, int);
 
 // A generic bubblesort.
 void Bubblesort(void*, int, char (*)(void*, void*), size_t);
@@ -9,10 +17,6 @@ void Bubblesort(void*, int, char (*)(void*, void*), size_t);
 // A generic quicksort.
 void QuickSort(void*, int, int, char (*)(void*, void*), size_t);
 
-// Chooses a random pivot and places it at its correct position such that everything before it is smaller and everything after it is bigger.
-int Partition (void*, int, int, char (*)(void*, void*), size_t);
-
-// Swaps two elements in an array.
-void Swap(void*, void*, size_t);
-  
+// Takes a number and returns nonzero value iff it's a power of two.
+char IsPowerOfTwo(unsigned long long);
   

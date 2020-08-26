@@ -14,8 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#include "FileManager.h"
-#include "SoundEditor.h"
+#include "WaveReadWriterInternal.h"
 #include "MyUtils.h"
 #include <tchar.h> // For dealing with strings that may be unicode or ANSI.
 #include <ksmedia.h> // For the KSDATAFORMAT_SUBTYPE_PCM macro.
@@ -29,61 +28,58 @@
 #define FOURCC_DATA     mmioFOURCC('d' , 'a', 't', 'a')
 #define FOURCC_SILENT   mmioFOURCC('s', 'l', 'n', 't')
 #define FOURCC_CUE      mmioFOURCC('c', 'u', 'e', ' ')
-#define FOURCC_FACT     mmioFOURCC('f', 'a', 'c', 't')
 #define FOURCC_PLAYLIST mmioFOURCC('p', 'l', 's', 't')
 #define FOURCC_SAMPLER  mmioFOURCC('s', 'm', 'p', 'l')
 
 #define MAX_CHUNK_ITERATIONS 1 << 16 // Various loops use this to know when to stop in case the WAVE file is really stupid and has a lot of chunks with nothing.
 
-static FileInfo* fileInfo = NULL;
-
-void SetCurrentFile(LPCTSTR path)
+void AllocateWaveFile(FileInfo** fileInfo, LPCTSTR path)
 {
     // This won't do anything if a file isn't already open.
-    CloseCurrentFile();
+    CloseWaveFile(fileInfo);
 
-    fileInfo = calloc(1, sizeof(FileInfo));
+    *fileInfo = calloc(1, sizeof(FileInfo));
 
     // Creating copy of path string on heap for long term storage. +1 because of the null character.
     if (path != NULL)
     {
-        fileInfo->path = malloc(sizeof(TCHAR) * (_tcslen(path) + 1));
-        _tcscpy(fileInfo->path, path);
+        (*fileInfo)->path = malloc(sizeof(TCHAR) * (_tcslen(path) + 1));
+        _tcscpy((*fileInfo)->path, path);
     }
 }
 
-void CloseCurrentFile()
+void CloseWaveFile(FileInfo** fileInfo)
 {
     // Dodging null pointer exceptions like a boss.
-    if (!IsFileOpen())
+    if (!IsFileOpen(*fileInfo))
     {
         return;
     }
 
     // We're gonna take advantage of the fact that free can take null points and just not do anything in that case.
-    free(fileInfo->path);
-    free(fileInfo->waveform.segments);
+    free((*fileInfo)->path);
+    free((*fileInfo)->waveform.segments);
     
-    if (fileInfo->cue != NULL)
+    if ((*fileInfo)->cue != NULL)
     {
-        free(fileInfo->cue->pointsArr);
-        free(fileInfo->cue);
+        free((*fileInfo)->cue->pointsArr);
+        free((*fileInfo)->cue);
     }
 
     // Unlike free, fclose does require that we check for NULL beforehand.
-    if (fileInfo->file != NULL)
+    if ((*fileInfo)->file != NULL)
     {
-        fclose(fileInfo->file);
+        fclose((*fileInfo)->file);
     }
 
-    free(fileInfo);
-    fileInfo = NULL;
+    free(*fileInfo);
+    *fileInfo = NULL;
 }
 
-ReadWaveResult ReadWaveFile(LPCTSTR path)
+ReadWaveResult ReadWaveFile(FileInfo** fileInfo, LPCTSTR path)
 {
     // For all errors other than FILE_CANT_OPEN, this would be done when we SetCurrentFile. But for consistency I think it should happen for FILE_CANT_OPEN as well.
-    CloseCurrentFile();
+    CloseWaveFile(fileInfo);
 
     // Using _tfsopen rather than _tfopen so we can specify that we want exclusive write access.
     FILE* file = _tfsopen(path, TEXT("r+b"), _SH_DENYWR);
@@ -95,34 +91,34 @@ ReadWaveResult ReadWaveFile(LPCTSTR path)
         return FILE_CANT_OPEN;
     }
 
-    SetCurrentFile(path);
-    fileInfo->file = file;
+    AllocateWaveFile(fileInfo, path);
+    (*fileInfo)->file = file;
 
     ReadWaveResult result = FILE_READ_SUCCESS; // Important that we initialize this to success, which is 0.
 
     // Reading the opening part of the file. This includes the RIFF character code, the file size, and the WAVE character code. After this there's all the subchunks.
     // If we read it successfully we also verify that it has the right values in this header.
-    if (fread(&(fileInfo->header), sizeof(WaveHeader), 1, file) == 1 && fileInfo->header.chunkHeader.id == FOURCC_RIFF && fileInfo->header.id == FOURCC_WAVE)
+    if (fread(&((*fileInfo)->header), sizeof(WaveHeader), 1, file) == 1 && (*fileInfo)->header.chunkHeader.id == FOURCC_RIFF && (*fileInfo)->header.id == FOURCC_WAVE)
     {
         // Verifying that the file size is as described. This has the (much desired) effect of also verifying that the file size doesn't exceed 4GB, which we'll rely on when we use functions like fseek from now on.
         _fseeki64(file, 0, SEEK_END);
 
-        if (_ftelli64(file) - sizeof(ChunkHeader) == fileInfo->header.chunkHeader.size)
+        if (_ftelli64(file) - sizeof(ChunkHeader) == (*fileInfo)->header.chunkHeader.size)
         {
             // Now we're gonna search for the chunks listed below. The rest aren't relevant to us.
             // The variables are initialized to 0 because it is a value they can't possibly get otherwise, and it'll help us determine which chunks were found later on.
-            DWORD formatChunk = 0, waveformChunk = 0, cueChunk = 0, factChunk;
-            result |= FindImportantChunks(&formatChunk, &waveformChunk, &cueChunk, &factChunk);
+            DWORD formatChunk = 0, waveformChunk = 0, cueChunk = 0;
+            result |= FindImportantChunks(*fileInfo, &formatChunk, &waveformChunk, &cueChunk);
 
             // Now we have the positions of all the relevant chunks and we know about which ones don't exist. Verifying some constraints about chunks that must exist, sometimes under certain conditions.
             if (!ResultHasError(result) && waveformChunk != 0 && formatChunk != 0)
             {
                 // Reading all the relevant chunks. For optional chunks, these functions return true when the chunk doesn't exist.
-                if (ReadFormatChunk(formatChunk) && ReadWaveformChunk(waveformChunk) && ReadCueChunk(cueChunk) && ReadFactChunk(factChunk))
+                if (ReadFormatChunk(*fileInfo, formatChunk) && ReadWaveformChunk(*fileInfo, waveformChunk) && ReadCueChunk(*fileInfo, cueChunk))
                 {
                     // By the time we're here, the reading part is mostly done (only thing left is the waveform itself which is not yet needed to be read).
                     // This function is already getting too nested, so the remainder of its work will be done by ValidateFile, which actually checks all the file data to see if it's supported and in line with the specifications.
-                    result |= ValidateFile();
+                    result |= ValidateFile(*fileInfo);
                 }
                 else
                 {
@@ -133,7 +129,7 @@ ReadWaveResult ReadWaveFile(LPCTSTR path)
         }
         else
         {
-            fprintf(stderr, "File size is %lld while it says it should be %lu.\n", _ftelli64(file) - sizeof(ChunkHeader), fileInfo->header.chunkHeader.size);
+            fprintf(stderr, "File size is %lld while it says it should be %lu.\n", _ftelli64(file) - sizeof(ChunkHeader), (*fileInfo)->header.chunkHeader.size);
             result = FILE_BAD_SIZE;
         }
     }
@@ -146,16 +142,16 @@ ReadWaveResult ReadWaveFile(LPCTSTR path)
     // Freeing memory if the operation was a failure.
     if (ResultHasError(result))
     {
-        CloseCurrentFile();
+        CloseWaveFile(fileInfo);
     }
 
     return result;
 }
 
-ReadWaveResult FindImportantChunks(DWORD* formatChunk, DWORD* waveDataChunk, DWORD* cueChunk, DWORD* factChunk)
+ReadWaveResult FindImportantChunks(FileInfo* fileInfo, DWORD* formatChunk, DWORD* waveDataChunk, DWORD* cueChunk)
 {
     // Counters for how many of each chunk we have, because it's a problem if there's more than 1 of anything.
-    int formatChunks = 0, waveDataChunks = 0, cueChunks = 0, factChunks = 0;
+    int formatChunks = 0, waveDataChunks = 0, cueChunks = 0;
     ChunkHeader chunk;
     FILE* file = fileInfo->file;
     ReadWaveResult result = FILE_READ_SUCCESS;
@@ -205,10 +201,6 @@ ReadWaveResult FindImportantChunks(DWORD* formatChunk, DWORD* waveDataChunk, DWO
                 *cueChunk = chunkPos;
                 cueChunks++;
                 break;
-            case FOURCC_FACT:
-                *factChunk = chunkPos;
-                factChunks++;
-                break;
             // The following two chunks describe how to loop certain segments of the file. I ignore this information, but want to give a warning about it.
             case FOURCC_PLAYLIST:
             case FOURCC_SAMPLER:
@@ -226,7 +218,7 @@ ReadWaveResult FindImportantChunks(DWORD* formatChunk, DWORD* waveDataChunk, DWO
     }
 
     // We could have checked these conditions as the counters were getting counted and stop immediately when one of these reaches 2, but this way is cleaner IMO.
-    if (formatChunks > 1 || waveDataChunks > 1 || cueChunks > 1 || factChunks > 1)
+    if (formatChunks > 1 || waveDataChunks > 1 || cueChunks > 1)
     {
         result = FILE_BAD_WAVE;
     }
@@ -234,7 +226,7 @@ ReadWaveResult FindImportantChunks(DWORD* formatChunk, DWORD* waveDataChunk, DWO
     return result;
 }
 
-char ReadFormatChunk(DWORD chunkOffset)
+char ReadFormatChunk(FileInfo* fileInfo, DWORD chunkOffset)
 {
     FILE* file = fileInfo->file;
     _fseeki64(file, chunkOffset, SEEK_SET);
@@ -242,7 +234,7 @@ char ReadFormatChunk(DWORD chunkOffset)
     return fread(&(fileInfo->format.contents), min(sizeof(WAVEFORMATEXTENSIBLE), (size_t)fileInfo->format.header.size), 1, file) == 1;
 }
 
-char ReadWaveformChunk(DWORD chunkOffset)
+char ReadWaveformChunk(FileInfo* fileInfo, DWORD chunkOffset)
 {
     FILE* file = fileInfo->file;
     _fseeki64(file, chunkOffset, SEEK_SET);
@@ -339,7 +331,8 @@ char ReadWaveformChunk(DWORD chunkOffset)
     return TRUE;
 }
 
-char ReadCueChunk(DWORD chunkOffset)
+// TODO: since I decided to ignore silence chunks, cue chunks aren't necessary to read anymore. I can delete all the cue-chunk reading code one day.
+char ReadCueChunk(FileInfo* fileInfo, DWORD chunkOffset)
 {
     if (chunkOffset == 0)
     {
@@ -390,41 +383,21 @@ char CuePointComparator(void* p1, void* p2)
     return ((CuePoint*)p1)->chunkStart < ((CuePoint*)p2)->chunkStart;
 }
 
-char ReadFactChunk(DWORD chunkOffset)
-{
-    if (chunkOffset == 0)
-    {
-        fileInfo->fact = NULL;
-        return TRUE;
-    }
-    else
-    {
-        fileInfo->fact = malloc(sizeof(FactChunk));
-        _fseeki64(fileInfo->file, chunkOffset, SEEK_SET);
-        return fread(fileInfo->fact, sizeof(FactChunk), 1, fileInfo->file) == 1;
-    }
-}
-
-ReadWaveResult ValidateFile()
+ReadWaveResult ValidateFile(FileInfo* fileInfo)
 {
     ReadWaveResult result = FILE_READ_SUCCESS;
 
-    if (ResultHasError(result |= ValidateFormat()))
+    if (ResultHasError(result |= ValidateFormat(fileInfo)))
     {
         return result;
     }
 
-    if (ResultHasError(result |= ValidateWaveform()))
+    if (ResultHasError(result |= ValidateWaveform(fileInfo)))
     {
         return result;
     }
 
-    if (ResultHasError(result |= ValidateCue()))
-    {
-        return result;
-    }
-
-    if (ResultHasError(result |= ValidateFact()))
+    if (ResultHasError(result |= ValidateCue(fileInfo)))
     {
         return result;
     }
@@ -432,7 +405,7 @@ ReadWaveResult ValidateFile()
     return result;
 }
 
-ReadWaveResult ValidateFormat()
+ReadWaveResult ValidateFormat(FileInfo* fileInfo)
 {
     WAVEFORMATEXTENSIBLE* formatExt = &(fileInfo->format.contents); // This shortens the code quite a bit.
     ReadWaveResult result = FILE_READ_SUCCESS;
@@ -448,11 +421,9 @@ ReadWaveResult ValidateFormat()
         return FILE_BAD_FORMAT;
     }
 
-    // Now that we've verified the format, we let's check the sample rate!
-    // In the future I might just not even impose any limit on the sample rate. I don't know if there's any reason to. But for now this is here. // TODO: decide on this.
-    if (!(FILE_MIN_FREQUENCY <= formatExt->Format.nSamplesPerSec && formatExt->Format.nSamplesPerSec <= FILE_MAX_FREQUENCY))
+    if (formatExt->Format.nSamplesPerSec == 0)
     {
-        fprintf(stderr, "Unsupported sample rate: %lu.\n", formatExt->Format.nSamplesPerSec);
+        fprintf(stderr, "File has a frequency of 0.\n");
         return FILE_BAD_FREQUENCY;
     }
 
@@ -521,18 +492,46 @@ ReadWaveResult ValidateFormat()
     return result;
 }
 
-ReadWaveResult ValidateWaveform()
+ReadWaveResult ValidateWaveform(FileInfo* fileInfo)
 {
-    // The only thing there is to verify is that the file doesn't end before the chunk does. For lists, we had to verify that while reading them.
-    if (!fileInfo->waveform.isList && fileInfo->waveform.offset + fileInfo->waveform.segments[0].header.size > fileInfo->header.chunkHeader.size)
+    // Preventing too many samples in the interest of memory efficiency.
+    // TODO: I could manipulate files of 8, 16 bit depths using single precision floats and only use double precision for higher depths. That way I'll be able to raise this limit.
+    if ((fileInfo->sampleLength = CountSampleLength(fileInfo)) > FILE_MAX_SAMPLES)
     {
-        return FILE_BAD_WAVE;
+        fprintf(stderr, "File has more samples than the allowed maximum.\n");
+        return FILE_BAD_SAMPLES;
     }
 
-    return FILE_READ_SUCCESS;
+    if (fileInfo->waveform.isList)
+    {
+        ReadWaveResult result = FILE_READ_SUCCESS;
+
+        // Silent chunks are allowed but ignored, so giving a warning about it.
+        for (DWORD i = 0; i < fileInfo->waveform.segmentsLength; i++)
+        {
+            if (fileInfo->waveform.segments[i].header.id == FOURCC_SILENT)
+            {
+                result |= FILE_CHUNK_WARNING;
+                break;
+            }
+        }
+
+        return result;
+    }
+    else
+    {
+        // Verifying is that the file doesn't end before the chunk does. For lists, we had to verify that while reading them.
+        if (fileInfo->waveform.offset + fileInfo->waveform.segments[0].header.size > fileInfo->header.chunkHeader.size)
+        {
+            fprintf(stderr, "File ends before the data chunk says it should.\n");
+            return FILE_BAD_WAVE;
+        }
+
+        return FILE_READ_SUCCESS;
+    }
 }
 
-ReadWaveResult ValidateCue()
+ReadWaveResult ValidateCue(FileInfo* fileInfo)
 {
     // Nothing to verify about non-lists. I mean, we could verify that they point to 0, but there's no reason to as we won't change this later anyway.
     // Cue point is optional so if it's missing, we say it's valid.
@@ -566,81 +565,101 @@ ReadWaveResult ValidateCue()
     return FILE_READ_SUCCESS;
 }
 
-ReadWaveResult ValidateFact()
+DWORD CountSampleLength(FileInfo* fileInfo)
 {
-    // There are things we could verify about fact chunks, but it's not relevant to this program. I just need them because I have to write them when creating new files.
-    return FILE_READ_SUCCESS;
+    DWORD sum;
+
+    if (fileInfo->waveform.isList)
+    {
+        sum = 0;
+        WaveformSegment* segments = fileInfo->waveform.segments;
+
+        // Summing up the sizes of the waveform segments if the silence chunks were "unpackaged" into a stream of PCM.
+        for (DWORD i = 0; i < fileInfo->waveform.segmentsLength; i++)
+        {
+            // Only counting data chunks, because silence chunks are ignored.
+            if (segments[i].header.id == FOURCC_DATA)
+            {
+                sum += segments[i].header.size;
+            }
+        }
+    }
+    else
+    {
+        sum = fileInfo->waveform.segments[0].header.size;
+    }
+
+    // The amount of samples per channel is the data byte size divided by the bytes per block.
+    return sum / fileInfo->format.contents.Format.nBlockAlign;
 }
 
 // This function doesn't check that inputs are valid, because we assume that they were checked by the calling code.
-void CreateNewFile(unsigned int length, unsigned int frequency, unsigned int byteDepth)
+void CreateNewFile(FileInfo** fileInfo, unsigned int length, unsigned int frequency, unsigned int byteDepth)
 {
     // New files are identified by having no string associated with their name yet.
-    SetCurrentFile(NULL);
+    AllocateWaveFile(fileInfo, NULL);
+
+    unsigned int bitDepth = byteDepth * 8;
+    unsigned int dataLength = length * frequency * byteDepth;
 
     // These are NULL for new files.
-    fileInfo->file = NULL;
-    fileInfo->cue = NULL;
+    (*fileInfo)->file = NULL;
+    (*fileInfo)->cue = NULL;
 
     // Configuring the wave header.
     // Note: when calculating file size, there's no way that it exceeds 4GB because of the limits we impose on frequency, length, and byte depth. It's not even close.
-    fileInfo->header.chunkHeader.id = FOURCC_RIFF;
-    fileInfo->header.chunkHeader.size = sizeof(FOURCC) + sizeof(FormatChunk) + sizeof(FactChunk) + sizeof(ChunkHeader) + (length * frequency * byteDepth);
-    fileInfo->header.id = FOURCC_WAVE;
+    // TODO: not sure about adding dataLength % 2 to the size. The idea is that it would be the padding byte for chunks of odd lengths but is it necessary if it's the last chunk in the file?
+    (*fileInfo)->header.chunkHeader.id = FOURCC_RIFF;
+    (*fileInfo)->header.chunkHeader.size = sizeof(FOURCC) + sizeof(FormatChunk) + sizeof(ChunkHeader) + dataLength + (dataLength % 2);
+    (*fileInfo)->header.id = FOURCC_WAVE;
 
     // Configuring format chunk to a WAVE_FORMAT_EXTENSIBLE chunk with subtype PCM, mono and with parameters as given.
-    fileInfo->format.header.id = FOURCC_FORMAT;
-    fileInfo->format.header.size = sizeof(WAVEFORMATEXTENSIBLE);
+    (*fileInfo)->format.header.id = FOURCC_FORMAT;
+    (*fileInfo)->format.header.size = sizeof(WAVEFORMATEXTENSIBLE);
 
-    fileInfo->format.contents.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-    fileInfo->format.contents.Format.nChannels = 1;
-    fileInfo->format.contents.Format.nSamplesPerSec = frequency;
-    fileInfo->format.contents.Format.wBitsPerSample = byteDepth * 8;
-    fileInfo->format.contents.Format.nBlockAlign = byteDepth; // Equal to (nChannels * wBitsPerSample) / 8, when nChannels is 1 and wBitsPerSample = byteDepth * 8.
-    fileInfo->format.contents.Format.nAvgBytesPerSec = frequency * byteDepth; // Equal to nSamplesPerSec * nBlockAlign.
-    fileInfo->format.contents.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
+    (*fileInfo)->format.contents.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    (*fileInfo)->format.contents.Format.nChannels = 1;
+    (*fileInfo)->format.contents.Format.nSamplesPerSec = frequency;
+    (*fileInfo)->format.contents.Format.wBitsPerSample = bitDepth;
+    (*fileInfo)->format.contents.Format.nBlockAlign = byteDepth; // Equal to (nChannels * wBitsPerSample) / 8, when nChannels is 1 and wBitsPerSample = byteDepth * 8.
+    (*fileInfo)->format.contents.Format.nAvgBytesPerSec = frequency * byteDepth; // Equal to nSamplesPerSec * nBlockAlign.
+    (*fileInfo)->format.contents.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
 
-    fileInfo->format.contents.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
-    fileInfo->format.contents.dwChannelMask = SPEAKER_FRONT_CENTER; // I used a WAV editing tool to convert an old school mono file to an EXTENSIBLE mono file, and this is the mask it used.
-    fileInfo->format.contents.Samples.wValidBitsPerSample = byteDepth * 8;
+    (*fileInfo)->format.contents.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
+    (*fileInfo)->format.contents.dwChannelMask = SPEAKER_FRONT_CENTER; // I used a WAV editing tool to convert an old school mono file to an EXTENSIBLE mono file, and this is the mask it used.
+    (*fileInfo)->format.contents.Samples.wValidBitsPerSample = bitDepth;
 
-    // Configuring the waveform to be a single data chunk that we will later place after the format and fact chunks.
-    fileInfo->waveform.offset = sizeof(WaveHeader) + sizeof(FormatChunk) + sizeof(FactChunk);
-    fileInfo->waveform.isList = FALSE;
-    fileInfo->waveform.segmentsLength = 1;
-    fileInfo->waveform.segments = malloc(sizeof(WaveformSegment));
-    fileInfo->waveform.segments[0].header.id = FOURCC_DATA;
-    fileInfo->waveform.segments[0].header.size = length * frequency * byteDepth;
-    fileInfo->waveform.segments[0].relativeOffset = 0;
-
-    // Configuring fact chunk because it is required for EXTENSIBLE files.
-    fileInfo->fact = malloc(sizeof(FactChunk));
-    fileInfo->fact->header.id = FOURCC_FACT;
-    fileInfo->fact->header.size = sizeof(DWORD);
-    fileInfo->fact->sampleLength = frequency * length;
+    // Configuring the waveform to be a single data chunk that we will later place after the format chunk.
+    (*fileInfo)->waveform.offset = sizeof(WaveHeader) + sizeof(FormatChunk);
+    (*fileInfo)->waveform.isList = FALSE;
+    (*fileInfo)->waveform.segmentsLength = 1;
+    (*fileInfo)->waveform.segments = malloc(sizeof(WaveformSegment));
+    (*fileInfo)->waveform.segments[0].header.id = FOURCC_DATA;
+    (*fileInfo)->waveform.segments[0].header.size = dataLength;
+    (*fileInfo)->waveform.segments[0].relativeOffset = 0;
 }
 
-void WriteCurrentFile()
+void WriteWaveFile(FileInfo* fileInfo)
 {
 
 }
 
-void WriteCurrentFileAs(LPCTSTR path)
+void WriteWaveFileAs(FileInfo* fileInfo, LPCTSTR path)
 {
 
 }
 
-char IsFileNew()
+char IsFileNew(FileInfo* fileInfo)
 {
-    return IsFileOpen() && fileInfo->path == NULL;
+    return IsFileOpen(fileInfo) && fileInfo->path == NULL;
 }
 
-char IsFileOpen()
+char IsFileOpen(FileInfo* fileInfo)
 {
     return fileInfo != NULL;
 }
 
-unsigned int GetChannelNames(TCHAR buffer[][24])
+unsigned int GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][24])
 {
     // This maps channels their names. If a channel corresponds to the i'th bit in the channel mask, then positions[i] holds its name.
     static const TCHAR* positions[] = {TEXT("Front Left"), TEXT("Front Right"), TEXT("Front Center"), TEXT("Low Frequency"), TEXT("Back Left"), TEXT("Back Right"),
