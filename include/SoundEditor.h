@@ -6,6 +6,8 @@
 // Returns nonzero value iff there are changes that have not yet been saved.
 char HasUnsavedProgress();
 
+void RealInterleavedFFT(Function*);
 
+void InverseRealInterleavedFFT(Function*);
 
 #endif

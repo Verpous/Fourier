@@ -9,7 +9,7 @@ unsigned int Log2(unsigned long long);
 // Returns the reverse of a number with respect to a number of digits given.
 unsigned long long BitReverse(unsigned int, unsigned long long);
 
-#define SOUND_EDITOR_INTERNAL_H_TYPED_CONTENTS(type)                                                                                                             \
+#define SOUND_EDITOR_INTERNAL_H_TYPED_CONTENTS(type)                                                                                                    \
                                                                                                                                                         \
 /* Swaps each element in the array with its bit-reverse. Assumes function length is a power of two.*/                                                   \
 void BitReverseArr_##type(Function_##type f);                                                                                                           \

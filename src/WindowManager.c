@@ -449,7 +449,7 @@ void FileOpen(HWND windowHandle)
                     messageText = TEXT("The file's actual size does not match up with what it should be.");
                     break;
                 case FILE_BAD_SAMPLES:
-                    messageText = TEXT("The file exceeds the maximum number of samples allowed by this program.");
+                    messageText = TEXT("The file has an audio length of 0 seconds.");
                     break;
                 case FILE_MISC_ERROR:
                 default:
@@ -490,6 +490,7 @@ void FileOpen(HWND windowHandle)
                 }
             }
             
+            LoadPCMInterleaved(fileEditor.fileInfo, &(fileEditor.channelsData));
             PaintCurrentFileEditor(mainWindowHandle);
         }
     }
@@ -679,6 +680,7 @@ void ApplyNewFileOptions(HWND windowHandle)
 
         // Proceeding with creating a new file only if the user didn't choose to abort.
         CreateNewFile(&(fileEditor.fileInfo), length, frequency, byteDepth);
+        LoadPCMInterleaved(fileEditor.fileInfo, &(fileEditor.channelsData));
         PaintCurrentFileEditor(mainWindowHandle);
         CloseNewFileOptions(windowHandle);
 

@@ -18,11 +18,11 @@
 #define _USE_MATH_DEFINES
 
 #include "SoundEditorInternal.h"
+#include "MyUtils.h"
 #include <complex.h> // For dealing with complex numbers.
 #include <math.h> // For min.
 #include <limits.h> // For CHAR_BIT.
-
-#define CAST(f, type) ((type)f)
+#include <stdio.h> // For fprintf.
 
 #define cexp_DoubleComplex(x) cexp(x)
 #define cexp_FloatComplex(x) cexpf(x)
@@ -38,22 +38,20 @@ char HasUnsavedProgress()
     return 0;
 }
 
-unsigned int Log2(unsigned long long N)
+void RealInterleavedFFT(Function* f)
 {
-    // Let me tell you a little secret: this is actually a function that finds the index of the least significant set bit. Because of the assumption that N is a power of two, the output is identical.
-    unsigned int i = 0, mask = 1;
-    
-    while (i < sizeof(N) * CHAR_BIT)
+    switch (GetType(f))
     {
-        if ((mask & N) != 0)
-        {
+        case FloatComplexType:
+            RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
             break;
-        }
-
-        i++;
+        case DoubleComplexType:
+            RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+            break;
+        default:
+            fprintf(stderr, "Tried to FFT an invalid type.\n");
+            break;
     }
-
-    return i;
 }
 
 unsigned long long BitReverse(unsigned int digits, unsigned long long n)
@@ -85,7 +83,7 @@ unsigned long long BitReverse(unsigned int digits, unsigned long long n)
 void BitReverseArr_##type(Function_##type f)                                                                                                            \
 {                                                                                                                                                       \
     unsigned long long len = NumOfSamples(f);                                                                                                           \
-    unsigned int digits = Log2(len);                                                                                                                    \
+    unsigned int digits = CountTrailingZeroes(len);                                                                                                     \
                                                                                                                                                         \
     for (unsigned long long i = 0; i < len; i++)                                                                                                        \
     {                                                                                                                                                   \
@@ -158,7 +156,7 @@ void FFT_##type(Function_##type f)                                              
     /* The stride is the length of each sub-tree in the current level.*/                                                                                \
     /*We start from 2 because the level with length-1 sub-trees is trivial and assumed to already be contained in the array.*/                          \
     unsigned long long stride = 2, halfStride = 1;                                                                                                      \
-    unsigned int logLen = Log2(len);                                                                                                                    \
+    unsigned int logLen = CountTrailingZeroes(len);                                                                                                     \
                                                                                                                                                         \
     /* Each iteration of this loop climbs another level up the recursion tree.*/                                                                        \
     for (unsigned int j = 0; j < logLen; j++)                                                                                                           \

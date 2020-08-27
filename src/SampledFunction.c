@@ -19,7 +19,7 @@
 #include <math.h> // for min.
 
 // Important to use a power of two here. Writing this number as 1 << p pisses off gcc.
-#define MAX_SEGMENT_LEN MEGABYTES(256)
+#define MAX_SEGMENT_LEN MEGAS(32)
 
 #define SAMPLED_FUNCTION_C_TYPED_CONTENTS(type)                                         \
 char AllocateFunction_##type(Function_##type* f, unsigned long long length)             \

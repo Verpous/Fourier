@@ -20,6 +20,7 @@ typedef float FloatReal;
 
 #define get(f, i) (f.samples[i / f.segmentLen][i % f.segmentLen])
 #define NumOfSamples(f) (f.segmentCount * f.segmentCount)
+#define GetType(f) (*((FunctionType*)f))
 
 #define SAMPLED_FUNCTION_H_TYPED_CONTENTS(type)                                                                             \
 typedef struct Function_##type                                                                                              \
@@ -35,5 +36,4 @@ char AllocateFunction_##type(Function_##type*, unsigned long long);
 
 SAMPLED_FUNCTION_H_TYPED_CONTENTS(FloatComplex)
 SAMPLED_FUNCTION_H_TYPED_CONTENTS(DoubleComplex)
-
 #endif

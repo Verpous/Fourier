@@ -1,12 +1,11 @@
 #ifndef FILE_MANAGER_H
 #define FILE_MANAGER_H
 
+#include "MyUtils.h"
+#include "SampledFunction.h"
 #include <windows.h> // For various winapi features.
 #include <mmreg.h> // For various WAVE-related things.
 #include <stdio.h> // For dealing with files.
-
-// Since each sample gets converted to a 16 byte double complex number, memory usage can get high. We prevent it from getting too high by imposing this limit. Current it limits memory usage to 8GB.
-#define FILE_MAX_SAMPLES 1 << 30
 
 // Byte-depths we support. Notice it's in bytes and not bits. This program only supports bit-depths which are multiples of 8.
 #define FILE_MIN_DEPTH 1
@@ -107,12 +106,16 @@ typedef struct FileInfo
 // Closes the given file, and deallocates it.
 void CloseWaveFile(FileInfo**);
 
-
 // Takes a path to a WAVE file and verifies that it is a WAVE file, then reads its data into memory.
 ReadWaveResult ReadWaveFile(FileInfo**, LPCTSTR);
 
 // Sets internal data about what the current file is according to the given new file creation parameters.
 void CreateNewFile(FileInfo**, unsigned int, unsigned int, unsigned int);
+
+// Loads the PCM data of the wave file into an array of functions it will allocate at the given address, such that the i'th function corresponds to the i'th channel.
+// The data is loaded "interleaved", meaning each sample is complex, the real parts correspond to even indices of PCM samples, and the imaginary parts correspond to odds.
+// Additionally, zero-padding is added to bring the sample length to a power of two.
+void LoadPCMInterleaved(FileInfo*, Function**);
 
 // Writes the modified data from memory back to the file.
 void WriteWaveFile(FileInfo*);

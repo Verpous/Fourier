@@ -34,6 +34,6 @@ ReadWaveResult ValidateWaveform(FileInfo*);
 ReadWaveResult ValidateCue(FileInfo*);
 
 // Counts the length of a single channel from this file in samples.
-DWORD CountSampleLength(FileInfo*);
+unsigned long long CountSampleLength(FileInfo*);
 
 #endif

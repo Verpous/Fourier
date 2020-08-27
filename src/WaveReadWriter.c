@@ -15,12 +15,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "WaveReadWriterInternal.h"
-#include "MyUtils.h"
 #include <tchar.h> // For dealing with strings that may be unicode or ANSI.
 #include <ksmedia.h> // For the KSDATAFORMAT_SUBTYPE_PCM macro.
 #include <math.h> // For the min macro.
 #include <stdlib.h> // For malloc and such.
 #include <share.h> // For shflags to _tfsopen.
+#include <limits.h> // For integer max values.
 
 #define FOURCC_WAVE     mmioFOURCC('W', 'A', 'V', 'E')
 #define FOURCC_FORMAT   mmioFOURCC('f', 'm', 't', ' ')
@@ -31,7 +31,16 @@
 #define FOURCC_PLAYLIST mmioFOURCC('p', 'l', 's', 't')
 #define FOURCC_SAMPLER  mmioFOURCC('s', 'm', 'p', 'l')
 
-#define MAX_CHUNK_ITERATIONS 1 << 16 // Various loops use this to know when to stop in case the WAVE file is really stupid and has a lot of chunks with nothing.
+#define MAX_CHUNK_ITERATIONS (1 << 16) // Various loops use this to know when to stop in case the WAVE file is really stupid and has a lot of chunks with nothing.
+
+// The biggest signed integer possible with the given byte depth.
+#define DEPTH_MAX(depth) (depth == 1 ? CHAR_MAX : depth == 2 ? SHRT_MAX : depth == 3 ? 0x7FFFFF : INT_MAX)
+
+// A mask where the only bit set is the most significant bit of an int with the given byte depth.
+#define DEPTH_HIGH_BIT(depth) (1 << ((depth * CHAR_BIT) - 1))
+
+// A mask where the only set bits are the ones that unavailable in an int with the given byte depth.
+#define SIGN_EXTEND_MASK(depth) (depth == 1 ? 0xFFFFFF00 : depth == 2 ? 0xFFFF0000 : depth == 3 ? 0xFF000000 : 0)
 
 void AllocateWaveFile(FileInfo** fileInfo, LPCTSTR path)
 {
@@ -75,6 +84,8 @@ void CloseWaveFile(FileInfo** fileInfo)
     free(*fileInfo);
     *fileInfo = NULL;
 }
+
+#pragma region Opening
 
 ReadWaveResult ReadWaveFile(FileInfo** fileInfo, LPCTSTR path)
 {
@@ -401,7 +412,7 @@ ReadWaveResult ValidateFile(FileInfo* fileInfo)
     {
         return result;
     }
-    
+
     return result;
 }
 
@@ -462,7 +473,7 @@ ReadWaveResult ValidateFormat(FileInfo* fileInfo)
         div_t divResult = div(formatExt->Format.wBitsPerSample, 8);
 
         // We support only bit-depths which are multiples of 8, and not all of them either.
-        // For PCM format, the BitsPerSample is exactly the bit-depth of a single sample of a single channel, which makes our jobs easy.
+        // For PCM format, the wBitsPerSample is exactly the bit-depth of a single sample of a single channel, which makes our jobs easy.
         if (!(FILE_MIN_DEPTH <= divResult.quot && divResult.quot <= FILE_MAX_DEPTH) || divResult.rem != 0)
         {
             fprintf(stderr, "File is PCM and has an invalid bit depth of %hu.\n", formatExt->Format.wBitsPerSample);
@@ -494,11 +505,9 @@ ReadWaveResult ValidateFormat(FileInfo* fileInfo)
 
 ReadWaveResult ValidateWaveform(FileInfo* fileInfo)
 {
-    // Preventing too many samples in the interest of memory efficiency.
-    // TODO: I could manipulate files of 8, 16 bit depths using single precision floats and only use double precision for higher depths. That way I'll be able to raise this limit.
-    if ((fileInfo->sampleLength = CountSampleLength(fileInfo)) > FILE_MAX_SAMPLES)
+    // Caching the sample length and verifying that it isn't 0.
+    if ((fileInfo->sampleLength = CountSampleLength(fileInfo)) == 0)
     {
-        fprintf(stderr, "File has more samples than the allowed maximum.\n");
         return FILE_BAD_SAMPLES;
     }
 
@@ -565,9 +574,9 @@ ReadWaveResult ValidateCue(FileInfo* fileInfo)
     return FILE_READ_SUCCESS;
 }
 
-DWORD CountSampleLength(FileInfo* fileInfo)
+unsigned long long CountSampleLength(FileInfo* fileInfo)
 {
-    DWORD sum;
+    unsigned long long sum;
 
     if (fileInfo->waveform.isList)
     {
@@ -637,6 +646,131 @@ void CreateNewFile(FileInfo** fileInfo, unsigned int length, unsigned int freque
     (*fileInfo)->waveform.segments[0].header.id = FOURCC_DATA;
     (*fileInfo)->waveform.segments[0].header.size = dataLength;
     (*fileInfo)->waveform.segments[0].relativeOffset = 0;
+
+    // Setting the sample length for the file.
+    (*fileInfo)->sampleLength = length * frequency;
+}
+
+#pragma endregion // Opening.
+
+void LoadPCMInterleaved(FileInfo* fileInfo, Function** channelFunctions)
+{
+        // This macro is basically this entire function, except for all the different byte depths we can have.
+    #define LOAD_TYPED_PCM_INTERLEAVED(precision, depth)                                                                                                                                    \
+    *channelFunctions = malloc(sizeof(Function_##precision##Complex) * relevantChannels);                                                                                                   \
+                                                                                                                                                                                            \
+    for (WORD i = 0; i < relevantChannels; i++)                                                                                                                                             \
+    {                                                                                                                                                                                       \
+        AllocateFunction_##precision##Complex((*channelFunctions) + (i * sizeof(Function_##precision##Complex)), paddedLength / 2);                                                         \
+    }                                                                                                                                                                                       \
+                                                                                                                                                                                            \
+    /* This declaration needs to be made inside the macro, but the variable name has to be distinct per macro call to not piss off gcc so we append the depth.*/                            \
+    Function_##precision##Complex* funcs##depth = *((Function_##precision##Complex**)channelFunctions);                                                                                     \
+                                                                                                                                                                                            \
+    /* Skipping the part where we read from the file if the file is newly created.*/                                                                                                        \
+    if (!IsFileNew(fileInfo))                                                                                                                                                               \
+    {                                                                                                                                                                                       \
+        /* We'll read the data segment by segment.*/                                                                                                                                        \
+        for (DWORD i = 0; i < segmentsLength; i++)                                                                                                                                          \
+        {                                                                                                                                                                                   \
+            /* Silent chunks are ignored.*/                                                                                                                                                 \
+            if (segments[i].header.id == FOURCC_DATA)                                                                                                                                       \
+            {                                                                                                                                                                               \
+                _fseeki64(file, ((__int64)fileInfo->waveform.offset) + segments[i].relativeOffset + sizeof(ChunkHeader), SEEK_SET);                                                         \
+                size_t blocksInChunk = segments[i].header.size / blockAlign;                                                                                                                \
+                                                                                                                                                                                            \
+                /* Reading PCM in chunks of buffer size and converting to complex interleaved samples until everything from this chunk has been read.*/                                     \
+                for (size_t blocksRead = 0; blocksRead < blocksInChunk; blocksRead += bufferBlockLen)                                                                                       \
+                {                                                                                                                                                                           \
+                    size_t currentBlocks = min(bufferBlockLen, blocksInChunk - blocksRead);                                                                                                 \
+                    fread(buffer, blockAlign, currentBlocks, file);                                                                                                                         \
+                                                                                                                                                                                            \
+                    /* Loading the data block by block.*/                                                                                                                                   \
+                    for (size_t b = 0; b < currentBlocks; b++)                                                                                                                              \
+                    {                                                                                                                                                                       \
+                        /* Loading each relevant sample in the block.*/                                                                                                                     \
+                        for (WORD c = 0; c < relevantChannels; c++)                                                                                                                         \
+                        {                                                                                                                                                                   \
+                            /* First, we read the sample in its integer form. All byte depths get read into a 32-bit integer.*/                                                             \
+                            /* The upside of this is less repeat code and easier conversion of biased to two's complement for 8-bit PCM.*/                                                  \
+                            /* The downside is branching (which should be resolved at compile time) and we have to sign extend everything.*/                                                \
+                            int sample = 0;                                                                                                                                                 \
+                            memcpy(&sample, buffer + (b * blockAlign) + (c * containerSize), depth);                                                                                        \
+                                                                                                                                                                                            \
+                            /* 8-bit files use biased representation instead of two's complement. Converting it.*/                                                                          \
+                            if (depth == 1)                                                                                                                                                 \
+                            {                                                                                                                                                               \
+                                sample -= 127;                                                                                                                                              \
+                            }                                                                                                                                                               \
+                            /* In this part we sign-extend the other int types, except 32-bit because it doesn't need it.*/                                                                 \
+                            else if (depth != 4)                                                                                                                                            \
+                            {                                                                                                                                                               \
+                                if ((DEPTH_HIGH_BIT(depth) & sample) != 0)                                                                                                                  \
+                                {                                                                                                                                                           \
+                                    sample |= SIGN_EXTEND_MASK(depth);                                                                                                                      \
+                                }                                                                                                                                                           \
+                            }                                                                                                                                                               \
+                                                                                                                                                                                            \
+                            /* Now we convert it to a float in the range of -1 to 1.*/                                                                                                      \
+                            /* The conversion also balances out the fact that there's more negative than positive numbers in two's complement.*/                                            \
+                            precision##Real realSample = ((sample + CAST(0.5, precision##Real)) / (DEPTH_MAX(depth) + CAST(0.5, precision##Real)));                                         \
+                                                                                                                                                                                            \
+                            /* If this is an even sample, we want to assign it to the real part of get(funcs[c], sampleIndex/2). Otherwise we want to assign it to the imaginary part.*/    \
+                            /* To do this, I get the address of the sampleIndex/2'th sample, cast it to its real float type, and then assign one step ahead if the sample index is odd.*/   \
+                            /* This works because complex numbers are represented as two adjacent floats in memory, with the real part being first.*/                                       \
+                            *(CAST(&get(funcs##depth[c], sampleIndex / 2), precision##Real*) + (sampleIndex % 2)) = realSample;                                                             \
+                        }                                                                                                                                                                   \
+                                                                                                                                                                                            \
+                        sampleIndex++;                                                                                                                                                      \
+                    }                                                                                                                                                                       \
+                }                                                                                                                                                                           \
+            }                                                                                                                                                                               \
+        }                                                                                                                                                                                   \
+    }                                                                                                                                                                                       \
+                                                                                                                                                                                            \
+    /* Zero-padding until we reach that power of two length. This also has the job of occupying all the data for new files.*/                                                               \
+    for (; sampleIndex < paddedLength; sampleIndex++)                                                                                                                                       \
+    {                                                                                                                                                                                       \
+        for (WORD c = 0; c < relevantChannels; c++)                                                                                                                                         \
+        {                                                                                                                                                                                   \
+            *(CAST(&get(funcs##depth[c], sampleIndex / 2), precision##Real*) + (sampleIndex % 2)) = CAST(0.0, precision##Real);                                                             \
+        }                                                                                                                                                                                   \
+    }
+
+    // This is where the function actually starts executing from. The macro needs to be above it.
+    FILE* file = fileInfo->file;
+    WORD relevantChannels = min(fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS); // The number of channels we want to load.
+    WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample; // The amount of bytes each sample effectively takes up.
+    WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
+    WORD blockAlign = fileInfo->format.contents.Format.nBlockAlign; // The amount of bytes each block of one sample per channel takes up.
+    unsigned long long paddedLength = NextPowerOfTwo(fileInfo->sampleLength); // The sample length of a channel of data, rounded up to the next power of two.
+
+    // We want to hold 64 megablocks. If that makes the buffer exceed 256 megabytes, we'll pick the biggest block length that keeps the total size under 256 megabytes
+    DWORD segmentsLength = fileInfo->waveform.segmentsLength;
+    WaveformSegment* segments = fileInfo->waveform.segments;
+    size_t bufferBlockLen = blockAlign > MEGAS(256) / MEGAS(64) ? MEGAS(256 / blockAlign) : MEGAS(64);
+    void* buffer = malloc(bufferBlockLen * blockAlign);
+    unsigned long long sampleIndex = 0; // This is actually sort of double the index. It'll be more clear in the comments inside the macro it's used in.
+
+    // To be efficient with memory while not sacrificing precision, byte depths of 1,2 get converted to single precision floats, and 3,4 get converted to double precision.
+    switch (byteDepth)
+    {
+        case 1:
+            LOAD_TYPED_PCM_INTERLEAVED(Float, 1)
+        case 2:
+            LOAD_TYPED_PCM_INTERLEAVED(Float, 2)
+            break;
+        case 3:
+            LOAD_TYPED_PCM_INTERLEAVED(Double, 3)
+        case 4:
+            LOAD_TYPED_PCM_INTERLEAVED(Double, 4)
+            break;
+        default: // This case should never happen.
+            fprintf(stderr, "Somehow the byte depth isn't supported.\n");
+            break;
+    }
+
+    free(buffer);
 }
 
 void WriteWaveFile(FileInfo* fileInfo)

@@ -15,7 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "MyUtilsInternal.h"
-#include <stdlib.h>
+#include <stdlib.h> // For memcpy, rand, etc.
+#include <limits.h> // For CHAR_BIT and max unsigned long long.
+
 
 int RandRange(int min, int max)
 {
@@ -89,4 +91,56 @@ int Partition(void* arr, int low, int high, char (*comparator)(void*, void*), si
 char IsPowerOfTwo(unsigned long long n)
 {
     return (n != 0) && ((n & (n - 1)) == 0);
+}
+
+unsigned int CountTrailingZeroes(unsigned long long N)
+{
+    unsigned int i = 0;
+    unsigned long long mask = 1;
+    
+    while (i < sizeof(N) * CHAR_BIT)
+    {
+        if ((mask & N) != 0)
+        {
+            break;
+        }
+
+        mask <<= 1;
+        i++;
+    }
+
+    return i;
+}
+
+unsigned int CountLeadingZeroes(unsigned long long N)
+{
+    unsigned int i = 0;
+    unsigned long long mask = 1ULL << (sizeof(N) * CHAR_BIT - 1);
+    
+    while (i < sizeof(N) * CHAR_BIT)
+    {
+        if ((mask & N) != 0)
+        {
+            break;
+        }
+
+        mask >>= 1;
+        i++;
+    }
+
+    return i;
+}
+
+unsigned long long NextPowerOfTwo(unsigned long long N)
+{
+    if (IsPowerOfTwo(N))
+    {
+        return N;
+    }
+    else
+    {
+        // The number isn't a power of two, so we take the number 100...0, and right shift it such that the 1 bit is one left of N's highest set bit.
+        unsigned int leadingZeroes = CountLeadingZeroes(N);
+        return (1ULL << (sizeof(N) * CHAR_BIT - 1ULL)) >> (leadingZeroes - 1ULL);
+    }
 }

@@ -18,6 +18,7 @@ typedef struct NewFileOptionsWindow
 typedef struct FileEditor
 {   
     FileInfo* fileInfo;
+    Function* channelsData; // This can be either the waveform or the DFT, we swap between them.
     HWND frequencyTextbox;
     HWND changeTextbox;
     HWND addRadio;
