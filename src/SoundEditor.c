@@ -30,8 +30,8 @@
 #define conj_DoubleComplex(x) conj(x)
 #define conj_FloatComplex(x) conjf(x)
 
-#define RootOfUnity_DoubleComplex(k, N) cexp_DoubleComplex((CAST(-2.0 * M_PI, DoubleComplex)  * I * k) / N)
-#define RootOfUnity_FloatComplex(k, N) cexp_FloatComplex((CAST(-2.0 * M_PI, FloatComplex)  * I * k) / N)
+#define RootOfUnity_DoubleComplex(k, N) cexp_DoubleComplex((CAST(-2.0 * M_PI, DoubleComplex)  * I * (k)) / (N))
+#define RootOfUnity_FloatComplex(k, N) cexp_FloatComplex((CAST(-2.0 * M_PI, FloatComplex)  * I * (k)) / (N))
 
 char HasUnsavedProgress()
 {
@@ -82,7 +82,7 @@ unsigned long long BitReverse(unsigned int digits, unsigned long long n)
                                                                                                                                                         \
 void BitReverseArr_##type(Function_##type f)                                                                                                            \
 {                                                                                                                                                       \
-    unsigned long long len = NumOfSamples(f);                                                                                                           \
+    unsigned long long len = NumOfSamples_##type(&f);                                                                                                   \
     unsigned int digits = CountTrailingZeroes(len);                                                                                                     \
                                                                                                                                                         \
     for (unsigned long long i = 0; i < len; i++)                                                                                                        \
@@ -101,7 +101,7 @@ void BitReverseArr_##type(Function_##type f)                                    
                                                                                                                                                         \
 void RealInterleavedFFT_##type(Function_##type f)                                                                                                       \
 {                                                                                                                                                       \
-    unsigned long long len = NumOfSamples(f);                                                                                                           \
+    unsigned long long len = NumOfSamples_##type(&f);                                                                                                   \
     FFT_##type(f);                                                                                                                                      \
                                                                                                                                                         \
     /* Applying postprocessing to extract the DFT of the original function from the DFT of the interleaved one.*/                                       \
@@ -122,7 +122,7 @@ void RealInterleavedFFT_##type(Function_##type f)                               
                                                                                                                                                         \
 void InverseRealInterleavedFFT_##type(Function_##type f)                                                                                                \
 {                                                                                                                                                       \
-    unsigned long long len = NumOfSamples(f);                                                                                                           \
+    unsigned long long len = NumOfSamples_##type(&f);                                                                                                   \
                                                                                                                                                         \
     /* Applying preprocessing to revert back to the DFT of the interleaved function.*/                                                                  \
     /* The math is from the same document as the one I used for the forward transform.*/                                                                \
@@ -148,7 +148,7 @@ void InverseRealInterleavedFFT_##type(Function_##type f)                        
 /* The algorithm itself is a modified version of this: https://stackoverflow.com/a/37729648/12553917. */                                                \
 void FFT_##type(Function_##type f)                                                                                                                      \
 {                                                                                                                                                       \
-    unsigned long long len = NumOfSamples(f);                                                                                                           \
+    unsigned long long len = NumOfSamples_##type(&f);                                                                                                   \
                                                                                                                                                         \
     /* Bit-reversing the array sorts it by the order of the leaves in the recursion tree.*/                                                             \
     BitReverseArr_##type(f);                                                                                                                            \
@@ -184,7 +184,7 @@ void FFT_##type(Function_##type f)                                              
                                                                                                                                                         \
 void InverseFFT_##type(Function_##type f)                                                                                                               \
 {                                                                                                                                                       \
-    unsigned long long len = NumOfSamples(f);                                                                                                           \
+    unsigned long long len = NumOfSamples_##type(&f);                                                                                                   \
                                                                                                                                                         \
     /* Conjugating every sample before applying forward FFT.*/                                                                                          \
     for (unsigned long long i = 0; i < len; i++)                                                                                                        \

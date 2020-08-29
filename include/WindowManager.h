@@ -18,7 +18,7 @@ typedef struct NewFileOptionsWindow
 typedef struct FileEditor
 {   
     FileInfo* fileInfo;
-    Function* channelsData; // This can be either the waveform or the DFT, we swap between them.
+    Function** channelsData; // An array of function pointers. This can be either the waveform or the DFT, we swap between them.
     HWND frequencyTextbox;
     HWND changeTextbox;
     HWND addRadio;
@@ -55,9 +55,6 @@ void AddMainWindowMenus(HWND);
 // Paints controls that we want to have when the program starts.
 void AddMainWindowControls(HWND);
 
-// Paints all the GUI for editing the open file onto the main window.
-void PaintCurrentFileEditor(HWND);
-
 // Displays the dialog for selecting a file option.
 void PopSelectFileOptionDialog(HWND);
 
@@ -78,6 +75,21 @@ void FileSaveAs(HWND);
 
 // Prompts the user to choose if he wants to save his progress before it's lost. Returns zero iff the user chose to abort the operation that was about to cause progress to be lost.
 char PromptSaveProgress();
+
+// Using the currently open file, sets it up for editing. Returns zero iff it encountered an error.
+void InitializeFileEditor();
+
+// Paints all the GUI for editing the open file onto the main window.
+void PaintFileEditor();
+
+// Deallocates memory allocated for file editing and erases the editor from the window.
+void CloseFileEditor();
+
+// Frees memory that was reserved for storing the PCM/fourier functions of all the channels.
+void DeallocateChannelsData();
+
+// Un-paints the file editor.
+void EraseFileEditor();
 
 
 // Handler for any messages sent to the new file options dialog.

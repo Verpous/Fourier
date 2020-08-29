@@ -13,6 +13,7 @@
 
 // Beyond this number of channels, the WAVE file specifications won't tell you what the channels mean.
 #define MAX_NAMED_CHANNELS 18
+#define CHANNEL_NAME_BUFFER_LEN 24
 
 #define ResultHasError(x) (0x0000FFFF & (x))
 #define ResultHasWarning(x) (0xFFFF0000 & (x))
@@ -104,7 +105,7 @@ typedef struct FileInfo
 } FileInfo;
 
 // Closes the given file, and deallocates it.
-void CloseWaveFile(FileInfo**);
+void CloseWaveFile(FileInfo*);
 
 // Takes a path to a WAVE file and verifies that it is a WAVE file, then reads its data into memory.
 ReadWaveResult ReadWaveFile(FileInfo**, LPCTSTR);
@@ -115,13 +116,14 @@ void CreateNewFile(FileInfo**, unsigned int, unsigned int, unsigned int);
 // Loads the PCM data of the wave file into an array of functions it will allocate at the given address, such that the i'th function corresponds to the i'th channel.
 // The data is loaded "interleaved", meaning each sample is complex, the real parts correspond to even indices of PCM samples, and the imaginary parts correspond to odds.
 // Additionally, zero-padding is added to bring the sample length to a power of two.
-void LoadPCMInterleaved(FileInfo*, Function**);
+// Returns zero iff it failed to allocate memory for the functions.
+char LoadPCMInterleaved(FileInfo*, Function***);
 
 // Writes the modified data from memory back to the file.
-void WriteWaveFile(FileInfo*);
+void WriteWaveFile(FileInfo*, Function**);
 
 // Creates a new file with the modified data that we have in memory.
-void WriteWaveFileAs(FileInfo*, LPCTSTR);
+char WriteWaveFileAs(FileInfo*, LPCTSTR, Function**);
 
 // Check if a file is new, that is it doesn't have any save location associated with it yet.
 char IsFileNew(FileInfo*);
@@ -130,6 +132,6 @@ char IsFileNew(FileInfo*);
 char IsFileOpen(FileInfo*);
 
 // Occupies the array of strings with channel names. Assumes it's large enough to hold MAX_NAMED_CHANNELS strings. I don't like the 24 magic number, but we can't make this TCHAR** so this fixes a bug.
-unsigned int GetChannelNames(FileInfo*, TCHAR[][24]);
+unsigned int GetChannelNames(FileInfo*, TCHAR[][CHANNEL_NAME_BUFFER_LEN]);
 
 #endif

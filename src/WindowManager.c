@@ -200,7 +200,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             if (PromptSaveProgress(windowHandle))
             {
                 // Only proceeding if the user didn't choose to abort.
-                CloseWaveFile(&(fileEditor.fileInfo));
+                CloseFileEditor();
                 DestroyWindow(windowHandle);
             }
 
@@ -241,85 +241,6 @@ void AddMainWindowMenus(HWND windowHandle)
     AppendMenu(menuHandler, MF_POPUP, (UINT_PTR)editMenuHandler, TEXT("Edit"));
 
     SetMenu(windowHandle, menuHandler);
-}
-
-void PaintCurrentFileEditor(HWND windowHandle)
-{
-    // TODO: this is a temporary fix for cleaning the window before re-painting it. In the future I think I could do something more optimized, like only erase the parts that I have to (maybe only the channel names and graphs even).
-    static HWND tabCtrl = NULL;
-
-    if (tabCtrl != NULL)
-    {
-        DestroyWindow(tabCtrl);
-    }
-    
-    // Updating the window title to the open file's name.
-    if (IsFileNew(fileEditor.fileInfo))
-    {
-        SetWindowText(windowHandle, TEXT("Untitled") TITLE_POSTFIX);
-    }
-    else
-    {
-        // Extracting the file name from the full path, and appending " - Fourier".
-        // I decided not to impose a length limit because I fear cutting a unicode string in the middle might ruin it. Worst comes to worst, users get a long ass string at the top of the screen.
-        unsigned int len = _tcslen(fileEditor.fileInfo->path);
-        TCHAR pathCopy[len + _tcslen(TITLE_POSTFIX) + 1]; // Allocating enough for the path name, the postfix, and the null terminator.
-        _tcscpy(pathCopy, fileEditor.fileInfo->path);
-        PathStripPath(pathCopy);
-        _tcscat(pathCopy, TITLE_POSTFIX);
-        SetWindowText(windowHandle, pathCopy);
-    }
-
-    tabCtrl = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, windowHandle, NULL, NULL, NULL);
-
-    TCITEM tab;
-    tab.mask = TCIF_PARAM | TCIF_TEXT;
-
-    // This fills in the buffer with channel names, and returns how many channels were filled in.
-    TCHAR channelNames[MAX_NAMED_CHANNELS][24];
-    unsigned int numOfChannels = GetChannelNames(fileEditor.fileInfo, channelNames);
-
-    for (unsigned int i = 0; i < numOfChannels; i++)
-    {
-        tab.pszText = channelNames[i];
-        TabCtrl_InsertItem(tabCtrl, i, &tab);
-    }
-
-    // Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
-    HWND tabCtrlStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, windowHandle, NULL, NULL, NULL);
-
-    // Adding GUI for choosing what frequency to modify.
-    CreateWindow(WC_STATIC, TEXT("Frequency:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, windowHandle, NULL, NULL, NULL);
-
-    fileEditor.frequencyTextbox = CreateWindow(WC_EDIT, TEXT("0"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 130, 428, 65, 22, windowHandle, NULL, NULL, NULL);
-    SendMessage(fileEditor.frequencyTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-    CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 430, 60, 22, windowHandle, NULL, NULL, NULL);
-
-    // Adding GUI for choosing what change to apply.
-    CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 475, 80, 22, windowHandle, NULL, NULL, NULL);
-
-    // Adding a radio menu for choosing between multiply and add modes.
-    fileEditor.multiplyRadio = CreateWindow(WC_BUTTON, TEXT("Multiply"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 110, 470, 80, 30, windowHandle, NULL, NULL, NULL);
-    fileEditor.addRadio = CreateWindow(WC_BUTTON, TEXT("Add"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 190, 470, 50, 30, windowHandle, NULL, NULL, NULL);
-    SendMessage(fileEditor.multiplyRadio, BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
-
-    fileEditor.changeTextbox = CreateWindow(WC_EDIT, TEXT("1"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 250, 473, 65, 22, windowHandle, NULL, NULL, NULL);
-    SetWindowSubclass(fileEditor.changeTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
-    SendMessage(fileEditor.changeTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-
-    // Adding GUI for choosing how much smoothing to apply.
-    CreateWindow(WC_STATIC, TEXT("Smoothing region:"), WS_VISIBLE | WS_CHILD, 50, 520, 130, 22, windowHandle, NULL, NULL, NULL);
-    AddTrackbarWithTextbox(windowHandle, &(fileEditor.smoothingRangeTrackbar), &(fileEditor.smoothingRangeTextbox), 170, 520,
-        MIN_SMOOTHING_REGION, MAX_SMOOTHING_REGION, DEFAULT_SMOOTHING_REGION, SMOOTHING_REGION_TRACKBAR_LINESIZE, SMOOTHING_REGION_TRACKBAR_PAGESIZE, TEXT(XStringify(DEFAULT_SMOOTHING_REGION)), TEXT("Hz"));
-    
-    // The trackbar for some reason was rendered behind other stuff. This makes it render above.
-    BringWindowToTop(fileEditor.smoothingRangeTrackbar);
-
-    // Adding buttons for ok and cancel.
-    // TODO: I'm considering moving these buttons to the center of the screen (horizontally).
-    CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 595, 598, 70, 35, windowHandle, (HMENU)FILE_EDITOR_UNDO, NULL, NULL);
-    CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 675, 598, 70, 35, windowHandle, (HMENU)FILE_EDITOR_REDO, NULL, NULL);
-    CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, windowHandle, (HMENU)FILE_EDITOR_APPLY, NULL, NULL);
 }
 
 void PopSelectFileOptionDialog(HWND windowHandle)
@@ -419,7 +340,8 @@ void FileOpen(HWND windowHandle)
 
     if (GetOpenFileName(&ofn))
     {
-        ReadWaveResult result = ReadWaveFile(&(fileEditor.fileInfo), filename);
+        FileInfo* fileInfo;
+        ReadWaveResult result = ReadWaveFile(&fileInfo, filename);
 
         if (ResultHasError(result))
         {
@@ -471,7 +393,7 @@ void FileOpen(HWND windowHandle)
                     
                     if (choice == MSG_BOX_CANCEL)
                     {
-                        CloseWaveFile(&(fileEditor.fileInfo));
+                        CloseWaveFile(fileInfo);
                         return;
                     }
                 }
@@ -484,14 +406,13 @@ void FileOpen(HWND windowHandle)
                     
                     if (choice == MSG_BOX_CANCEL)
                     {
-                        CloseWaveFile(&(fileEditor.fileInfo));
+                        CloseWaveFile(fileInfo);
                         return;
                     }
                 }
             }
-            
-            LoadPCMInterleaved(fileEditor.fileInfo, &(fileEditor.channelsData));
-            PaintCurrentFileEditor(mainWindowHandle);
+
+            InitializeFileEditor(windowHandle, fileInfo);
         }
     }
     else // GetOpenFileName failed.
@@ -570,6 +491,130 @@ char PromptSaveProgress(HWND windowHandle)
 
     // Returning that the program should continue the operation that prompted this.
     return TRUE;
+}
+
+void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
+{
+    // Closing the file that was open until now.
+    CloseFileEditor();
+    fileEditor.fileInfo = fileInfo;
+
+    if (LoadPCMInterleaved(fileInfo, &(fileEditor.channelsData)))
+    {
+        PaintFileEditor();
+    }
+    else // Deallocating functions if it failed.
+    {
+        MessageBox(windowHandle, TEXT("You have insufficient memory for opening this file."), NULL, MB_ICONERROR | MB_OK);
+        CloseFileEditor();
+    }
+}
+
+void PaintFileEditor()
+{
+    // TODO: this is a temporary fix for cleaning the window before re-painting it. In the future I think I could do something more optimized, like only erase the parts that I have to (maybe only the channel names and graphs even).
+    // This doesn't even wipe everything now because the other windows painted here aren't children of this tab control. I need to figure out how not to repaint stuff that's already painted, or actually delete everything and repaint.
+    static HWND tabCtrl = NULL;
+
+    if (tabCtrl != NULL)
+    {
+        DestroyWindow(tabCtrl);
+    }
+    
+    // Updating the window title to the open file's name.
+    if (IsFileNew(fileEditor.fileInfo))
+    {
+        SetWindowText(mainWindowHandle, TEXT("Untitled") TITLE_POSTFIX);
+    }
+    else
+    {
+        // Extracting the file name from the full path, and appending " - Fourier".
+        // I decided not to impose a length limit because I fear cutting a unicode string in the middle might ruin it. Worst comes to worst, users get a long ass string at the top of the screen.
+        unsigned int len = _tcslen(fileEditor.fileInfo->path);
+        TCHAR pathCopy[len + _tcslen(TITLE_POSTFIX) + 1]; // Allocating enough for the path name, the postfix, and the null terminator.
+        _tcscpy(pathCopy, fileEditor.fileInfo->path);
+        PathStripPath(pathCopy);
+        _tcscat(pathCopy, TITLE_POSTFIX);
+        SetWindowText(mainWindowHandle, pathCopy);
+    }
+
+    tabCtrl = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, mainWindowHandle, NULL, NULL, NULL);
+
+    TCITEM tab;
+    tab.mask = TCIF_PARAM | TCIF_TEXT;
+
+    // This fills in the buffer with channel names, and returns how many channels were filled in.
+    TCHAR channelNames[MAX_NAMED_CHANNELS][CHANNEL_NAME_BUFFER_LEN];
+    unsigned int numOfChannels = GetChannelNames(fileEditor.fileInfo, channelNames);
+
+    for (unsigned int i = 0; i < numOfChannels; i++)
+    {
+        tab.pszText = channelNames[i];
+        TabCtrl_InsertItem(tabCtrl, i, &tab);
+    }
+
+    // Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
+    HWND tabCtrlStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, mainWindowHandle, NULL, NULL, NULL);
+
+    // Adding GUI for choosing what frequency to modify.
+    CreateWindow(WC_STATIC, TEXT("Frequency:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+
+    fileEditor.frequencyTextbox = CreateWindow(WC_EDIT, TEXT("0"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 130, 428, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+    SendMessage(fileEditor.frequencyTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+    CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 430, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+
+    // Adding GUI for choosing what change to apply.
+    CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 475, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+
+    // Adding a radio menu for choosing between multiply and add modes.
+    fileEditor.multiplyRadio = CreateWindow(WC_BUTTON, TEXT("Multiply"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 110, 470, 80, 30, mainWindowHandle, NULL, NULL, NULL);
+    fileEditor.addRadio = CreateWindow(WC_BUTTON, TEXT("Add"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 190, 470, 50, 30, mainWindowHandle, NULL, NULL, NULL);
+    SendMessage(fileEditor.multiplyRadio, BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
+
+    fileEditor.changeTextbox = CreateWindow(WC_EDIT, TEXT("1"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 250, 473, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+    SetWindowSubclass(fileEditor.changeTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
+    SendMessage(fileEditor.changeTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+
+    // Adding GUI for choosing how much smoothing to apply.
+    CreateWindow(WC_STATIC, TEXT("Smoothing region:"), WS_VISIBLE | WS_CHILD, 50, 520, 130, 22, mainWindowHandle, NULL, NULL, NULL);
+    AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingRangeTrackbar), &(fileEditor.smoothingRangeTextbox), 170, 520,
+        MIN_SMOOTHING_REGION, MAX_SMOOTHING_REGION, DEFAULT_SMOOTHING_REGION, SMOOTHING_REGION_TRACKBAR_LINESIZE, SMOOTHING_REGION_TRACKBAR_PAGESIZE, TEXT(XStringify(DEFAULT_SMOOTHING_REGION)), TEXT("Hz"));
+    
+    // The trackbar for some reason was rendered behind other stuff. This makes it render above.
+    BringWindowToTop(fileEditor.smoothingRangeTrackbar);
+
+    // Adding buttons for ok and cancel.
+    // TODO: I'm considering moving these buttons to the center of the screen (horizontally).
+    CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 595, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_UNDO, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 675, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_REDO, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_APPLY, NULL, NULL);
+}
+
+
+void CloseFileEditor()
+{
+    EraseFileEditor();
+    DeallocateChannelsData();
+    CloseWaveFile(fileEditor.fileInfo);
+    ZeroMemory(&fileEditor, sizeof(FileEditor));
+}
+
+void DeallocateChannelsData()
+{
+    WORD relevantChannels = min(fileEditor.fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS);
+
+    for (WORD i = 0; i < relevantChannels; i++)
+    {
+        DeallocateFunction(fileEditor.channelsData[i]);
+        free(fileEditor.channelsData[i]);
+    }
+
+    free(fileEditor.channelsData);
+}
+
+void EraseFileEditor()
+{
+
 }
 
 #pragma endregion // MainWindow.
@@ -677,11 +722,11 @@ void ApplyNewFileOptions(HWND windowHandle)
     {
         // Storing this because the pointer to it will be deallocated by CloseNewFileOptions.
         HWND parent = newFileOptionsHandles->parent;
+        FileInfo* fileInfo;
 
         // Proceeding with creating a new file only if the user didn't choose to abort.
-        CreateNewFile(&(fileEditor.fileInfo), length, frequency, byteDepth);
-        LoadPCMInterleaved(fileEditor.fileInfo, &(fileEditor.channelsData));
-        PaintCurrentFileEditor(mainWindowHandle);
+        CreateNewFile(&fileInfo, length, frequency, byteDepth);
+        InitializeFileEditor(windowHandle, fileInfo);
         CloseNewFileOptions(windowHandle);
 
         // This is a bandage fix but I can't come up with a better way to have the select file option menu close when you create a new file.

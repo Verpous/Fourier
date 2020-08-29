@@ -18,10 +18,34 @@
 #include <stdlib.h> // For memcpy, rand, etc.
 #include <limits.h> // For CHAR_BIT and max unsigned long long.
 
-
 int RandRange(int min, int max)
 {
     return (rand() % (max - min)) + min;
+}
+
+long long RandLong()
+{
+    return (((long long)rand()) << (sizeof(int) * CHAR_BIT)) | rand();
+}
+
+double RandRangeDouble(double min, double max)
+{
+    return min + (((RandLong() + 0.5) / (LONG_LONG_MAX - 0.5)) * (max - min));
+}
+
+float RandRangeFloat(float min, float max)
+{
+    return min + (((rand() + 0.5) / (INT_MAX - 0.5)) * (max - min));
+}
+
+float ClampFloat(float val, float min, float max)
+{
+    return val > max ? max : val < min ? min : val;
+}
+
+double ClampDouble(double val, double min, double max)
+{
+    return val > max ? max : val < min ? min : val;
 }
 
 void Swap(void* a, void* b, size_t size) 

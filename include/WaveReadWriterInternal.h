@@ -36,4 +36,10 @@ ReadWaveResult ValidateCue(FileInfo*);
 // Counts the length of a single channel from this file in samples.
 unsigned long long CountSampleLength(FileInfo*);
 
+// Copies the given source file into the destination.
+void CopyWaveFile(FILE*, FILE*);
+
+// Writes a WAVE file from the given data. The data chunk is filled with junk.
+void WriteNewFile(FILE*, FileInfo*);
+
 #endif

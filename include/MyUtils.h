@@ -10,8 +10,23 @@
 
 #define CAST(f, type) ((type)(f))
 
-// Returns a random int in the range [min, max)
+// Returns a random int in the range [min, max).
 int RandRange(int, int);
+
+// Returns a random long long out of all the possible long long values.
+long long RandLong();
+
+// Returns a random single-precision float between [min, max].
+float RandRangeFloat(float, float);
+
+// Returns a random double-precision float between [min, max].
+double RandRangeDouble(double, double);
+
+// Clamps a single-precision float between two values.
+float ClampFloat(float, float, float);
+
+// Clamps a double-precision float between two values.
+double ClampDouble(double, double, double);
 
 // A generic bubblesort.
 void Bubblesort(void*, int, char (*)(void*, void*), size_t);
