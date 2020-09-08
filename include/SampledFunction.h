@@ -31,20 +31,31 @@ typedef struct Function_##type                                                  
 } Function_##type;                                                                                                          \
                                                                                                                             \
 /* Initializes a function, including allocating its samples array. Returns zero iff there was a memory allocation error.*/  \
-char AllocateFunction_##type(Function_##type*, unsigned long long);                                                         \
+char AllocateFunctionInternals_##type(Function_##type*, unsigned long long);                                                \
                                                                                                                             \
 /* Deallocates a function.*/                                                                                                \
-void DeallocateFunction_##type(Function_##type*);                                                                           \
+void DeallocateFunctionInternals_##type(Function_##type*);                                                                  \
                                                                                                                             \
-/* Returns how many samples are used to represent f.*/                                                                      \
-unsigned long long NumOfSamples_##type(Function_##type*);
+/* Clones the source function in the given sample range.*/                                                                  \
+Function_##type* CreatePartialClone_##type(Function_##type*, unsigned long long, unsigned long long);                       \
+                                                                                                                            \
+/* Copies the samples from the source function to the destination function, from their given starting points.*/             \
+void CopySamples_##type(Function_##type, Function_##type, unsigned long long, unsigned long long, unsigned long long);
+
+/* Returns how many samples are used to represent f.*/          
 unsigned long long NumOfSamples(Function*);
 
 // Returns the function's type.
 FunctionType GetType(Function*);
 
 // Deallocates memory allocated by the function (not the function itself).
-void DeallocateFunction(Function*);
+void DeallocateFunctionInternals(Function*);
+
+// Clones the source function in the given sample range.
+Function* CreatePartialClone(Function*, unsigned long long, unsigned long long);
+
+// Copies the samples from the source function to the destination function, from their given starting points.
+void CopySamples(Function*, Function*, unsigned long long, unsigned long long, unsigned long long);
 
 SAMPLED_FUNCTION_H_TYPED_CONTENTS(FloatComplex)
 SAMPLED_FUNCTION_H_TYPED_CONTENTS(DoubleComplex)

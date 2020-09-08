@@ -13,6 +13,7 @@
         "type_traits": "c",
         "utility": "c",
         "limits": "c",
-        "algorithm": "c"
+        "algorithm": "c",
+        "*.tcc": "c"
     }
 }

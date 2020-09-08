@@ -27,7 +27,6 @@
 #define FOURCC_WAVL     mmioFOURCC('w', 'a', 'v', 'l')
 #define FOURCC_DATA     mmioFOURCC('d' , 'a', 't', 'a')
 #define FOURCC_SILENT   mmioFOURCC('s', 'l', 'n', 't')
-#define FOURCC_CUE      mmioFOURCC('c', 'u', 'e', ' ')
 #define FOURCC_PLAYLIST mmioFOURCC('p', 'l', 's', 't')
 #define FOURCC_SAMPLER  mmioFOURCC('s', 'm', 'p', 'l')
 
@@ -77,12 +76,6 @@ void CloseWaveFile(FileInfo* fileInfo)
     // We're gonna take advantage of the fact that free can take null points and just not do anything in that case.
     free(fileInfo->path);
     free(fileInfo->waveform.segments);
-    
-    if (fileInfo->cue != NULL)
-    {
-        free(fileInfo->cue->pointsArr);
-        free(fileInfo->cue);
-    }
 
     // Unlike free, fclose does require that we check for NULL beforehand.
     if (fileInfo->file != NULL)
@@ -123,14 +116,14 @@ ReadWaveResult ReadWaveFile(FileInfo** fileInfo, LPCTSTR path)
         {
             // Now we're gonna search for the chunks listed below. The rest aren't relevant to us.
             // The variables are initialized to 0 because it is a value they can't possibly get otherwise, and it'll help us determine which chunks were found later on.
-            DWORD formatChunk = 0, waveformChunk = 0, cueChunk = 0;
-            result |= FindImportantChunks(*fileInfo, &formatChunk, &waveformChunk, &cueChunk);
+            DWORD formatChunk = 0, waveformChunk = 0;
+            result |= FindImportantChunks(*fileInfo, &formatChunk, &waveformChunk);
 
             // Now we have the positions of all the relevant chunks and we know about which ones don't exist. Verifying some constraints about chunks that must exist, sometimes under certain conditions.
             if (!ResultHasError(result) && waveformChunk != 0 && formatChunk != 0)
             {
                 // Reading all the relevant chunks. For optional chunks, these functions return true when the chunk doesn't exist.
-                if (ReadFormatChunk(*fileInfo, formatChunk) && ReadWaveformChunk(*fileInfo, waveformChunk) && ReadCueChunk(*fileInfo, cueChunk))
+                if (ReadFormatChunk(*fileInfo, formatChunk) && ReadWaveformChunk(*fileInfo, waveformChunk))
                 {
                     // By the time we're here, the reading part is mostly done (only thing left is the waveform itself which is not yet needed to be read).
                     // This function is already getting too nested, so the remainder of its work will be done by ValidateFile, which actually checks all the file data to see if it's supported and in line with the specifications.
@@ -164,10 +157,10 @@ ReadWaveResult ReadWaveFile(FileInfo** fileInfo, LPCTSTR path)
     return result;
 }
 
-ReadWaveResult FindImportantChunks(FileInfo* fileInfo, DWORD* formatChunk, DWORD* waveDataChunk, DWORD* cueChunk)
+ReadWaveResult FindImportantChunks(FileInfo* fileInfo, DWORD* formatChunk, DWORD* waveDataChunk)
 {
     // Counters for how many of each chunk we have, because it's a problem if there's more than 1 of anything.
-    int formatChunks = 0, waveDataChunks = 0, cueChunks = 0;
+    int formatChunks = 0, waveDataChunks = 0;
     ChunkHeader chunk;
     FILE* file = fileInfo->file;
     ReadWaveResult result = FILE_READ_SUCCESS;
@@ -213,10 +206,6 @@ ReadWaveResult FindImportantChunks(FileInfo* fileInfo, DWORD* formatChunk, DWORD
                 *waveDataChunk = chunkPos;
                 waveDataChunks++;
                 break;
-            case FOURCC_CUE:
-                *cueChunk = chunkPos;
-                cueChunks++;
-                break;
             // The following two chunks describe how to loop certain segments of the file. I ignore this information, but want to give a warning about it.
             case FOURCC_PLAYLIST:
             case FOURCC_SAMPLER:
@@ -234,7 +223,7 @@ ReadWaveResult FindImportantChunks(FileInfo* fileInfo, DWORD* formatChunk, DWORD
     }
 
     // We could have checked these conditions as the counters were getting counted and stop immediately when one of these reaches 2, but this way is cleaner IMO.
-    if (formatChunks > 1 || waveDataChunks > 1 || cueChunks > 1)
+    if (formatChunks > 1 || waveDataChunks > 1)
     {
         result = FILE_BAD_WAVE;
     }
@@ -347,58 +336,6 @@ char ReadWaveformChunk(FileInfo* fileInfo, DWORD chunkOffset)
     return TRUE;
 }
 
-// TODO: since I decided to ignore silence chunks, cue chunks aren't necessary to read anymore. I can delete all the cue-chunk reading code one day.
-char ReadCueChunk(FileInfo* fileInfo, DWORD chunkOffset)
-{
-    if (chunkOffset == 0)
-    {
-        fileInfo->cue = NULL;
-        return TRUE;
-    }
-    else // Chunk exists. Reading it.
-    {
-        // Starting with just reading the header and the field which says how many cue points there are.
-        CueChunk* cue = malloc(sizeof(CueChunk));
-        FILE* file = fileInfo->file;
-        fileInfo->cue = cue;
-        _fseeki64(file, chunkOffset, SEEK_SET);
-        
-        // If this read fails there's a problem.
-        if (fread(cue, sizeof(CueChunk) - sizeof(CuePoint*), 1, file) != 1)
-        {
-            fprintf(stderr, "Failed to read cue chunk.\n");
-            return FALSE;
-        }
-
-        // Ensuring that there's cue points, and also that there isn't so many that it's absurd.
-        if (cue->cuePoints == 0 || cue->cuePoints > MAX_CHUNK_ITERATIONS)
-        {
-            fprintf(stderr, "There are %lu cue points, which is invalid.\n", cue->cuePoints);
-            return FALSE;
-        }
-
-        // If we're here then the last read was successful. Now using the data we read to read all the cue points.
-        CuePoint* pointsArr = malloc(cue->cuePoints * sizeof(CuePoint));
-        cue->pointsArr = pointsArr;
-
-        if (fread(pointsArr, sizeof(CuePoint), cue->cuePoints, file) != cue->cuePoints)
-        {
-            fprintf(stderr, "Failed to read cue points array.\n");
-            return FALSE;
-        }
-
-        // Sorting the cue points by their ChunkStart will make our lives easier later.
-        // Initially I used quicksort here, but then realized the recursion might cause a stack overflow sometimes so I switched to bubblesort.
-        Bubblesort(pointsArr, cue->cuePoints, CuePointComparator, sizeof(CuePoint));
-        return TRUE;
-    }
-}
-
-char CuePointComparator(void* p1, void* p2)
-{
-    return ((CuePoint*)p1)->chunkStart < ((CuePoint*)p2)->chunkStart;
-}
-
 ReadWaveResult ValidateFile(FileInfo* fileInfo)
 {
     ReadWaveResult result = FILE_READ_SUCCESS;
@@ -409,11 +346,6 @@ ReadWaveResult ValidateFile(FileInfo* fileInfo)
     }
 
     if (ResultHasError(result |= ValidateWaveform(fileInfo)))
-    {
-        return result;
-    }
-
-    if (ResultHasError(result |= ValidateCue(fileInfo)))
     {
         return result;
     }
@@ -545,40 +477,6 @@ ReadWaveResult ValidateWaveform(FileInfo* fileInfo)
     }
 }
 
-ReadWaveResult ValidateCue(FileInfo* fileInfo)
-{
-    // Nothing to verify about non-lists. I mean, we could verify that they point to 0, but there's no reason to as we won't change this later anyway.
-    // Cue point is optional so if it's missing, we say it's valid.
-    if (!fileInfo->waveform.isList || fileInfo->cue == NULL)
-    {
-        return FILE_READ_SUCCESS;
-    }
-    
-    DWORD cuePoints = fileInfo->cue->cuePoints;
-    DWORD segmentsLength =  fileInfo->waveform.segmentsLength;
-    CuePoint* pointsArr = fileInfo->cue->pointsArr;
-    WaveformSegment* segments = fileInfo->waveform.segments;
-
-    // For every cue point, we'll check if its chunkStart correspodns to an existing waveform segment.
-    for (DWORD i = 0, dataIndex = 0; i < cuePoints; i++)
-    {
-        // in ReadCueChunk, we sorted the chunks by the chunkStart. So now we can search only for segments from where the last cue point left off.
-        while (dataIndex < segmentsLength && pointsArr[i].chunkStart != segments[dataIndex].relativeOffset)
-        {
-            dataIndex++;
-        }
-
-        // If we couldn't find a corresponding waveform segment, it's a failure.
-        if (dataIndex == segmentsLength || segments[dataIndex].header.id != pointsArr[i].chunkId)
-        {
-            fprintf(stderr, "One of the cue points does not correspond to an existing waveform segment.\n");
-            return FILE_BAD_WAVE;
-        }
-    }
-
-    return FILE_READ_SUCCESS;
-}
-
 unsigned long long CountSampleLength(FileInfo* fileInfo)
 {
     unsigned long long sum;
@@ -618,7 +516,6 @@ void CreateNewFile(FileInfo** fileInfo, unsigned int length, unsigned int freque
 
     // These are NULL for new files.
     (*fileInfo)->file = NULL;
-    (*fileInfo)->cue = NULL;
 
     // Configuring the wave header.
     // Note: when calculating file size, there's no way that it exceeds 4GB because of the limits we impose on frequency, length, and byte depth. It's not even close.
@@ -668,7 +565,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
     {                                                                                                                                                                                       \
         (*channelsData)[i] = calloc(1, sizeof(Function_##precision##Complex));                                                                                                              \
                                                                                                                                                                                             \
-        if (!AllocateFunction_##precision##Complex((*channelsData)[i], paddedLength / 2))                                                                                                   \
+        if (!AllocateFunctionInternals_##precision##Complex((*channelsData)[i], paddedLength / 2))                                                                                          \
         {                                                                                                                                                                                   \
             free(buffer);                                                                                                                                                                   \
             return FALSE;                                                                                                                                                                   \
@@ -750,7 +647,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 
     // This is where the function actually starts executing from. The macro needs to be above it.
     FILE* file = fileInfo->file;
-    WORD relevantChannels = min(fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS); // The number of channels we want to load.
+    WORD relevantChannels = GetRelevantChannelsCount(fileInfo); // The number of channels we want to load.
     WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample; // The amount of bytes each sample effectively takes up.
     WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
     WORD blockAlign = fileInfo->format.contents.Format.nBlockAlign; // The amount of bytes each block of one sample per channel takes up.
@@ -761,6 +658,11 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
     size_t bufferBlockLen = FILE_READING_BUFFER_LEN / blockAlign; // The buffer length is such that this will never be 0.
     void* buffer = malloc(bufferBlockLen * blockAlign); // Buffer size is the closest number less/equal to FILE_READING_BUFFER_LEN that divides by blockAlign.
     unsigned long long sampleIndex = 0; // This is actually sort of double the index. It'll be more clear in the comments inside the macro it's used in.
+
+    if (buffer == NULL)
+    {
+        return FALSE;
+    }
 
     // To be efficient with memory while not sacrificing precision, byte depths of 1,2 get converted to single precision floats, and 3,4 get converted to double precision.
     switch (byteDepth)
@@ -786,7 +688,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
     return TRUE;
 }
 
-void WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
+char WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
 {
     // This macro does most of this function's work, and generalizes it for different byte depths. Needs to be declared at the top before it's used.
     // This function is quite similar to LoadPCMInterleaved, because it essentially inverses it.*/
@@ -828,7 +730,7 @@ void WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
                         /* Clamping the sample to the range of possible integer values.*/                                                                                           \
                         sample = Clamp##precision(sample, DEPTH_MIN(depth), DEPTH_MAX(depth));                                                                                      \
                                                                                                                                                                                     \
-                        /* Rounding the sample to the nearest value.*/                                                                                                              \
+                        /* Rounding the sample to the nearest integer value.*/                                                                                                      \
                         int quantized = lround_##precision(sample);                                                                                                                 \
                                                                                                                                                                                     \
                         /* Converting 8-bit files to unsigned.*/                                                                                                                    \
@@ -850,7 +752,7 @@ void WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
     }
 
     FILE* file = fileInfo->file;
-    WORD relevantChannels = min(fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS); // The number of channels we're editing.
+    WORD relevantChannels = GetRelevantChannelsCount(fileInfo); // The number of channels we're editing.
     WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample; // The amount of bytes each sample effectively takes up.
     WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
     WORD blockAlign = fileInfo->format.contents.Format.nBlockAlign; // The amount of bytes each block of one sample per channel takes up.
@@ -860,6 +762,11 @@ void WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
     size_t bufferBlockLen = FILE_READING_BUFFER_LEN / blockAlign; // The buffer length is such that this will never be 0.
     void* buffer = malloc(bufferBlockLen * blockAlign); // Buffer size is the closest number less/equal to FILE_READING_BUFFER_LEN that divides by blockAlign.
     unsigned long long sampleIndex = 0; // This is actually sort of double the index. It'll be more clear in the comments inside the macro it's used in.
+
+    if (buffer == NULL)
+    {
+        return FALSE;
+    }
 
     // To be efficient with memory while not sacrificing precision, byte depths of 1,2 get converted to single precision floats, and 3,4 get converted to double precision.
     switch (byteDepth)
@@ -883,35 +790,51 @@ void WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
 
     free(buffer);
     fflush(file);
+    return TRUE;
 }
 
 char WriteWaveFileAs(FileInfo* fileInfo, LPCTSTR path, Function** channelsData)
 {
-    FILE* file = _tfsopen(path, TEXT("w+b"), _SH_DENYWR);
+    FILE* oldFile = fileInfo->file;
+    FILE* newFile = _tfsopen(path, TEXT("w+b"), _SH_DENYWR);
+    char success;
 
-    if (file == NULL)
+    if (newFile == NULL)
     {
         return FALSE;
     }
+
+    fileInfo->file = newFile;
 
     // For the sake of simplicity, the way this function works is it readies a file with junk values in the data chunk, and then calls WriteWaveFile which saves changes onto existing files.
     // This isn't the most performant way but it is simple and has no code repetition.
     if (IsFileNew(fileInfo))
     {
-        WriteNewFile(file, fileInfo);
+        success = WriteNewFile(newFile, fileInfo);
     }
     else
     {
-        CopyWaveFile(file, fileInfo->file);
+        success = CopyWaveFile(newFile, oldFile);
     }
-    
-    fclose(fileInfo->file);
-    fileInfo->file = file;
-    WriteWaveFile(fileInfo, channelsData);
+
+    // In case of failure to write the new file, reverting to how things were before.
+    if (!success || !WriteWaveFile(fileInfo, channelsData))
+    {
+        fclose(newFile);
+        _tremove(path);
+        fileInfo->file = oldFile;
+        return FALSE;
+    }
+
+    if (oldFile != NULL)
+    {
+        fclose(oldFile);
+    }
+
     return TRUE;
 }
 
-void WriteNewFile(FILE* file, FileInfo* fileInfo)
+char WriteNewFile(FILE* file, FileInfo* fileInfo)
 {
     _fseeki64(file, 0, SEEK_SET);
     fwrite(&(fileInfo->header), sizeof(WaveHeader), 1, file);
@@ -921,6 +844,11 @@ void WriteNewFile(FILE* file, FileInfo* fileInfo)
     // Filling data chunk with junk.
     void* buffer = malloc(FILE_READING_BUFFER_LEN * sizeof(char));
     size_t amountWritten, dataSize = fileInfo->waveform.segments[0].header.size;
+
+    if (buffer == NULL)
+    {
+        return FALSE;
+    }
 
     for (amountWritten = 0; amountWritten + FILE_READING_BUFFER_LEN < dataSize; amountWritten += FILE_READING_BUFFER_LEN)
     {
@@ -937,12 +865,18 @@ void WriteNewFile(FILE* file, FileInfo* fileInfo)
     }
 
     free(buffer);
+    return TRUE;
 }
 
-void CopyWaveFile(FILE* dest, FILE* src)
+char CopyWaveFile(FILE* dest, FILE* src)
 {
     _fseeki64(src, 0, SEEK_SET);
-    void* buffer = malloc(FILE_READING_BUFFER_LEN * sizeof(char)); // TODO: catch errors in mallocs like this?
+    void* buffer = malloc(FILE_READING_BUFFER_LEN * sizeof(char));
+
+    if (buffer == NULL)
+    {
+        return FALSE;
+    }
 
     while (!feof(src))
     {
@@ -951,6 +885,7 @@ void CopyWaveFile(FILE* dest, FILE* src)
     }
 
     free(buffer);
+    return TRUE;
 }
 
 char IsFileNew(FileInfo* fileInfo)
@@ -963,35 +898,33 @@ char IsFileOpen(FileInfo* fileInfo)
     return fileInfo != NULL;
 }
 
-unsigned int GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][CHANNEL_NAME_BUFFER_LEN])
+unsigned short GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][CHANNEL_NAME_BUFFER_LEN])
 {
     // This maps channels their names. If a channel corresponds to the i'th bit in the channel mask, then positions[i] holds its name.
     static const TCHAR* positions[] = {TEXT("Front Left"), TEXT("Front Right"), TEXT("Front Center"), TEXT("Low Frequency"), TEXT("Back Left"), TEXT("Back Right"),
         TEXT("Front Left Of Center"), TEXT("Front Right Of Center"), TEXT("Back Center"), TEXT("Side Left"), TEXT("Side Right"), TEXT("Top Center"),
         TEXT("Top Front Left"), TEXT("Top Front Center"), TEXT("Top Front Right"), TEXT("Top Back Left"), TEXT("Top Back Center"), TEXT("Top Back Right")};
 
-    WAVEFORMATEXTENSIBLE* formatExt = &(fileInfo->format.contents);
-    unsigned int nChannels = min(formatExt->Format.nChannels, MAX_NAMED_CHANNELS);
-
+    unsigned short relevantChannels = GetRelevantChannelsCount(fileInfo);
     LPCTSTR chanNumPrefix = TEXT("Channel #");
     unsigned int prefixLen = _tcslen(chanNumPrefix); // I think gcc will compute this at compile time.
 
     DWORD channelMask;
 
-    if (formatExt->Format.wFormatTag == WAVE_FORMAT_PCM)
+    if (fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM)
     {
-        channelMask =   nChannels == 1 ? SPEAKER_FRONT_CENTER :
-                        nChannels == 2 ? SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT :
+        channelMask =   relevantChannels == 1 ? SPEAKER_FRONT_CENTER :
+                        relevantChannels == 2 ? SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT :
                         0;
     }
     else // WAVE_FORMAT_EXTENSIBLE.
     {
         // Bits that I zero out in this mask are ones that don't map to any particular location in the specifications.
-        channelMask = formatExt->dwChannelMask & 0x0003FFFF;
+        channelMask = fileInfo->format.contents.dwChannelMask & 0x0003FFFF;
     }
 
     // This loop occupies the buffer with channel names according to the channel mask and the number of channels.
-    for (unsigned long i = 0, mask = 1, pos = 0; i < nChannels; i++)
+    for (unsigned long i = 0, mask = 1, pos = 0; i < relevantChannels; i++)
     {
         // Seeking the next set bit. All the bits starting from MAX_NAMED_CHANNELS are 0 so we stop there.
         while (pos < MAX_NAMED_CHANNELS && (mask & channelMask) == 0)
@@ -1017,5 +950,10 @@ unsigned int GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][CHANNEL_NAME_BUF
         }
     }
 
-    return nChannels;
+    return relevantChannels;
+}
+
+unsigned short GetRelevantChannelsCount(FileInfo* fileInfo)
+{
+    return min(fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS);
 }

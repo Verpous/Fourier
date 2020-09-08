@@ -15,7 +15,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "WindowManager.h"
-#include "SoundEditor.h"
 #include <stdio.h> // For printing errors and such.
 #include <commctrl.h> // For some trackbar-related things.
 #include <tchar.h> // For dealing with unicode and ANSI strings.
@@ -27,7 +26,7 @@
 // Like stringify, but it will stringify macro values instead of names if you give it a macro.
 #define XStringify(x) Stringify(x)
 
-// Takes a notification code and returns it as an HMENU that uses the high word so it words the same as system notification codes.
+// Takes a notification code and returns it as an HMENU that uses the high word so it works the same as system notification codes.
 #define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
 
 // The following are notification codes. Codes below 0x8000 are reserved.
@@ -47,11 +46,6 @@
 
 #define NEW_FILE_OPTIONS_OK 1
 #define NEW_FILE_OPTIONS_CANCEL 2
-
-#define MSG_BOX_OK 1
-#define MSG_BOX_CANCEL 2
-#define MSG_BOX_YES 6
-#define MSG_BOX_NO 7
 
 // File length is measured in seconds.
 #define FILE_MIN_LENGTH 1
@@ -73,6 +67,12 @@
 #define DEFAULT_SMOOTHING_REGION 250
 #define SMOOTHING_REGION_TRACKBAR_LINESIZE 5
 #define SMOOTHING_REGION_TRACKBAR_PAGESIZE 50
+
+#define MIN_SMOOTHING 0
+#define MAX_SMOOTHING 1000
+#define DEFAULT_SMOOTHING 500
+#define SMOOTHING_TRACKBAR_LINESIZE 1
+#define SMOOTHING_TRACKBAR_PAGESIZE 10
 
 #define NEW_FILE_TRACKBAR_TICKS 11 // How many ticks we want to have in a trackbar.
 
@@ -103,7 +103,7 @@ char InitializeWindows(HINSTANCE instanceHandle)
     InitCommonControlsEx(&commonCtrls);
     
     // Creates main window.
-    // TODO: not sure about this CLIPSIBLINGS thing, MS says it's needed for tab controls.
+    // WS_CLIPSIBLINGS makes child windows not draw over each other.
     mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled") TITLE_POSTFIX, WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS, 600, 250, 850, 700, NULL, NULL, NULL, NULL);
     return TRUE;
 }
@@ -189,9 +189,9 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             return 0;
         case WM_HSCROLL:
             // Updating the textbox to match the trackbar.
-            if (fileEditor.smoothingRangeTrackbar == (HWND)lparam)
+            if (fileEditor.smoothingTrackbar == (HWND)lparam)
             {
-                SyncTextboxToTrackbar(fileEditor.smoothingRangeTrackbar, fileEditor.smoothingRangeTextbox);
+                SyncTextboxToTrackbarFloat(fileEditor.smoothingTrackbar, fileEditor.smoothingTextbox);
             }
 
             return 0;
@@ -232,9 +232,9 @@ void AddMainWindowMenus(HWND windowHandle)
     AppendMenu(fileMenuHandler, MF_SEPARATOR, 0, NULL); // Separator between exit and all the other options.
     AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_EXIT), TEXT("Exit"));
 
-    // Appending edit menu options.
-    AppendMenu(editMenuHandler, MF_STRING, NOTIF_CODIFY(EDIT_MENU_UNDO), TEXT("Undo\tCtrl+Z"));
-    AppendMenu(editMenuHandler, MF_STRING, NOTIF_CODIFY(EDIT_MENU_REDO), TEXT("Redo\tCtrl+Y"));
+    // Appending edit menu options. Initially, undo and redo are grayed out.
+    AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_MENU_UNDO), TEXT("Undo\tCtrl+Z"));
+    AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_MENU_REDO), TEXT("Redo\tCtrl+Y"));
 
     // Adding both menus.
     AppendMenu(menuHandler, MF_POPUP, (UINT_PTR)fileMenuHandler, TEXT("File"));
@@ -257,11 +257,13 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
             switch (LOWORD(wparam))
             {
                 case FILE_EDITOR_REDO:
-                    fprintf(stderr, "REDO!\n");
+                    Redo(windowHandle);
                     break;
                 case FILE_EDITOR_UNDO:
+                    Undo(windowHandle);
                     break;
                 case FILE_EDITOR_APPLY:
+                    ApplyModificationFromInput(windowHandle);
                     break;
             }
 
@@ -273,9 +275,9 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 
             // Only matching the trackbar to the textbox when it's in fact the textbox that changed,
             // and when the textbox is in focus to avoid the fact that when I programmatically update the textbox due to trackbar movement, it then fires this event.
-            if (focusedWindow == fileEditor.smoothingRangeTextbox && controlHandle == fileEditor.smoothingRangeTextbox)
+            if (focusedWindow == fileEditor.smoothingTextbox && controlHandle == fileEditor.smoothingTextbox)
             {
-                SyncTrackbarToTextbox(fileEditor.smoothingRangeTrackbar, fileEditor.smoothingRangeTextbox);
+                SyncTrackbarToTextboxFloat(fileEditor.smoothingTrackbar, fileEditor.smoothingTextbox);
             }
 
             break;
@@ -295,8 +297,10 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
             DestroyWindow(windowHandle);
             break;
         case EDIT_MENU_REDO:
+            Redo(windowHandle);
             break;
         case EDIT_MENU_UNDO:
+            Undo(windowHandle);
             break;
         default:
             break;
@@ -343,7 +347,40 @@ void FileOpen(HWND windowHandle)
         FileInfo* fileInfo;
         ReadWaveResult result = ReadWaveFile(&fileInfo, filename);
 
-        if (ResultHasError(result))
+        if (!ResultHasError(result))
+        {
+            if (ResultHasWarning(result))
+            {
+                if (ResultWarningCode(result) & FILE_CHUNK_WARNING)
+                {
+                    int choice = MessageBox(windowHandle,
+                        TEXT("The file contains some information which is ignored by this program, which may lead to unexpected results."),
+                        TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
+                    
+                    if (choice == IDCANCEL)
+                    {
+                        CloseWaveFile(fileInfo);
+                        return;
+                    }
+                }
+
+                if (ResultWarningCode(result) & FILE_CHAN_WARNING)
+                {
+                    int choice = MessageBox(windowHandle,
+                        TEXT("The file contains more channels than this program supports. You will only be able to edit some of the channels."),
+                        TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
+                    
+                    if (choice == IDCANCEL)
+                    {
+                        CloseWaveFile(fileInfo);
+                        return;
+                    }
+                }
+            }
+
+            InitializeFileEditor(windowHandle, fileInfo);
+        }
+        else // There's an error.
         {
             LPTSTR messageText = NULL;
 
@@ -381,39 +418,6 @@ void FileOpen(HWND windowHandle)
 
             MessageBox(windowHandle, messageText, NULL, MB_OK | MB_ICONERROR);
         }
-        else // No error.
-        {
-            if (ResultHasWarning(result))
-            {
-                if (ResultWarningCode(result) & FILE_CHUNK_WARNING)
-                {
-                    int choice = MessageBox(windowHandle,
-                        TEXT("The file contains some information which is ignored by this program, which may lead to unexpected results."),
-                        TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
-                    
-                    if (choice == MSG_BOX_CANCEL)
-                    {
-                        CloseWaveFile(fileInfo);
-                        return;
-                    }
-                }
-
-                if (ResultWarningCode(result) & FILE_CHAN_WARNING)
-                {
-                    int choice = MessageBox(windowHandle,
-                        TEXT("The file contains more channels than this program supports. You will only be able to edit some of the channels."),
-                        TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
-                    
-                    if (choice == MSG_BOX_CANCEL)
-                    {
-                        CloseWaveFile(fileInfo);
-                        return;
-                    }
-                }
-            }
-
-            InitializeFileEditor(windowHandle, fileInfo);
-        }
     }
     else // GetOpenFileName failed.
     {
@@ -429,13 +433,33 @@ void FileOpen(HWND windowHandle)
 
 void FileSave(HWND windowHandle)
 {
-    if (IsFileNew(fileEditor.fileInfo))
+    if (HasUnsavedChanges())
     {
-        FileSaveAs(windowHandle);
-    }
-    else
-    {
-        WriteWaveFile(fileEditor.fileInfo);
+        // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
+        WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+        for (WORD i = 0; i < relevantChannels; i++)
+        {
+            InverseRealInterleavedFFT(fileEditor.channelsData[i]);
+        }
+
+        if (IsFileNew(fileEditor.fileInfo))
+        {
+            FileSaveAs(windowHandle);
+        }
+        else
+        {
+            // TODO: maybe catch errors with things like memory allocations in writing files, and pop an error message when it happens.
+            WriteWaveFile(fileEditor.fileInfo, fileEditor.channelsData);
+        }
+
+        // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to re-FFT only channels we need (?).
+        for (WORD i = 0; i < relevantChannels; i++)
+        {
+            RealInterleavedFFT(fileEditor.channelsData[i]);
+        }
+
+        fileEditor.currentSaveState = fileEditor.modificationStack;
     }
 }
 
@@ -443,7 +467,6 @@ void FileSaveAs(HWND windowHandle)
 {
     OPENFILENAME ofn = {0};
     TCHAR filename[MAX_PATH];
-    filename[0] = TEXT('\0');  // Without this line this doesn't work.
 
     ofn.lStructSize = sizeof(OPENFILENAME);
     ofn.hwndOwner = windowHandle;
@@ -451,25 +474,162 @@ void FileSaveAs(HWND windowHandle)
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrFilter = FILE_FILTER;
 
-    if (GetSaveFileName(&ofn))
+    // The rest of the code is in a loop because if the operation fails I give the user an option to choose to retry.
+    // This is important for saving files because otherwise, if there's an error when the user chose save by a prompt to save before data is lost, the data will be lost.
+    while (TRUE)
     {
-        WriteWaveFileAs(fileEditor.fileInfo, filename);
+        filename[0] = TEXT('\0');  // Without this line this doesn't work.
+
+        if (GetSaveFileName(&ofn))
+        {
+            // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
+            WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+            for (WORD i = 0; i < relevantChannels; i++)
+            {
+                InverseRealInterleavedFFT(fileEditor.channelsData[i]);
+            }
+
+            if (WriteWaveFileAs(fileEditor.fileInfo, filename, fileEditor.channelsData))
+            {
+                // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
+                WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+                for (WORD i = 0; i < relevantChannels; i++)
+                {
+                    RealInterleavedFFT(fileEditor.channelsData[i]);
+                }
+
+                fileEditor.currentSaveState = fileEditor.modificationStack;
+                break;
+            }
+            else
+            {
+                // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
+                WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+                for (WORD i = 0; i < relevantChannels; i++)
+                {
+                    RealInterleavedFFT(fileEditor.channelsData[i]);
+                }
+            }
+            
+            int choice = MessageBox(windowHandle, TEXT("There is insufficient memory for opening this file or the file couldn't be created."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
+
+            if (choice == IDCANCEL)
+            {
+                break;
+            }
+        }
+        else
+        {
+            DWORD error = CommDlgExtendedError();
+            fprintf(stderr, "GetSaveFileName failed with error code %lX\n", error);
+            
+            if (error == FNERR_BUFFERTOOSMALL)
+            {
+                int choice = MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH)) TEXT(" characters."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
+
+                if (choice == IDCANCEL)
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void Undo(HWND windowHandle)
+{
+    UndoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack));
+    UpdateUndoRedoState(windowHandle);
+}
+
+void Redo(HWND windowHandle)
+{
+    RedoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack));
+    UpdateUndoRedoState(windowHandle);
+}
+
+void ApplyModificationFromInput(HWND windowHandle)
+{
+    TCHAR buffer[16];
+    TCHAR* endChar;
+
+    // First reading the from frequency.
+    LRESULT length = SendMessage(fileEditor.fromFreqTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
+    double fromFreq = _tcstod(buffer, &endChar);
+
+    // This condition is met when the float couldn't be parsed from the string.
+    if (length == 0 || endChar != &(buffer[length]))
+    {
+        MessageBox(windowHandle, TEXT("Invalid input in 'From' textbox."), NULL, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    // Now reading to frequency.
+    length = SendMessage(fileEditor.toFreqTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
+    double toFreq = _tcstod(buffer, &endChar);
+
+    if (length == 0 || endChar != &(buffer[length]))
+    {
+        MessageBox(windowHandle, TEXT("Invalid input in 'To' textbox."), NULL, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    // Reading the change type.
+    ChangeType changeType = SendMessage(fileEditor.changeTypeDropdown, CB_GETCURSEL, 0, 0) == 0 ? MULTIPLY : ADD;
+
+    // Reading the change amount.
+    length = SendMessage(fileEditor.changeAmountTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
+    double changeAmount = _tcstod(buffer, &endChar);
+
+    if (length == 0 || endChar != &(buffer[length]))
+    {
+        MessageBox(windowHandle, TEXT("Invalid input in 'Amount' textbox."), NULL, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    // Reading the smoothing amount.
+    double smoothing = (((double)SendMessage(fileEditor.smoothingTrackbar, TBM_GETPOS, 0, 0)) - MIN_SMOOTHING) / (MAX_SMOOTHING - MIN_SMOOTHING);
+
+    // Reading the current channel.
+    unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
+    fprintf(stderr, "current channel is 0x%X.\n", (unsigned int)currentChannel);
+
+    // Converting fromFreq and toFreq from real frequencies to integer sample numbers.
+    // The total samples is twice what it says because this is a real FFT so we only store half the samples, the other half is conjugate symmetric.
+    // TODO: make sure these get floored properly or rounded in a different way if it's determined to be preferable.
+    unsigned long long totalSamples = 2 * NumOfSamples(fileEditor.channelsData[currentChannel]);
+    unsigned long long fromFreqInt = (fromFreq * totalSamples) / fileEditor.fileInfo->format.contents.Format.nSamplesPerSec;
+    unsigned long long toFreqInt = (toFreq * totalSamples) / fileEditor.fileInfo->format.contents.Format.nSamplesPerSec;
+
+    // TODO: possibly also check that the samples are close enough together.
+    if (!(0 <= fromFreqInt && fromFreqInt < totalSamples / 2) || !(0 <= toFreqInt && toFreqInt < totalSamples / 2))
+    {
+        MessageBox(windowHandle, TEXT("Frequencies to modify are out of range"), NULL, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    if (fromFreqInt >= toFreqInt)
+    {
+        MessageBox(windowHandle, TEXT("'From' frequency must be smaller than 'To' frequency."), NULL, MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    if (ApplyModification(fromFreqInt, toFreqInt, changeType, changeAmount, smoothing, currentChannel, fileEditor.channelsData, &(fileEditor.modificationStack)))
+    {
+        UpdateUndoRedoState(windowHandle);
     }
     else
     {
-        DWORD error = CommDlgExtendedError();
-        fprintf(stderr, "GetSaveFileName failed with error code %lX\n", error);
-        
-        if (error == FNERR_BUFFERTOOSMALL)
-        {
-            MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH)) TEXT(" characters."), NULL, MB_OK | MB_ICONERROR);
-        }
+        MessageBox(windowHandle, TEXT("There is insufficient memory for applying this change."), NULL, MB_OK | MB_ICONERROR);
     }
 }
 
 char PromptSaveProgress(HWND windowHandle)
 {
-    if (HasUnsavedProgress())
+    if (HasUnsavedChanges())
     {
         int choice = MessageBox(windowHandle,
             TEXT("There is unsaved progress that will be lost if you proceed without saving it. Would you like to save?"),
@@ -477,11 +637,11 @@ char PromptSaveProgress(HWND windowHandle)
 
         switch (choice)
         {
-            case MSG_BOX_CANCEL:
+            case IDCANCEL:
                 return FALSE; // Returning that the program short abort the operation that prompted this.
-            case MSG_BOX_NO:
+            case IDNO:
                 break; // Proceeding without saving in case of no.
-            case MSG_BOX_YES:
+            case IDYES:
                 FileSave(windowHandle); // Saving first in case of yes.
                 break;
             default:
@@ -501,26 +661,88 @@ void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 
     if (LoadPCMInterleaved(fileInfo, &(fileEditor.channelsData)))
     {
+        InitializeModificationStack(&(fileEditor.modificationStack));
+        fileEditor.currentSaveState = fileEditor.modificationStack;
         PaintFileEditor();
+        
+        // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to FFT only channels we need (?) and only after drawing the waveform graph.
+        WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+        for (WORD i = 0; i < relevantChannels; i++)
+        {
+            RealInterleavedFFT(fileEditor.channelsData[i]);
+        }
     }
     else // Deallocating functions if it failed.
     {
-        MessageBox(windowHandle, TEXT("You have insufficient memory for opening this file."), NULL, MB_ICONERROR | MB_OK);
+        MessageBox(windowHandle, TEXT("There is insufficient memory for opening this file."), NULL, MB_ICONERROR | MB_OK);
         CloseFileEditor();
     }
 }
 
 void PaintFileEditor()
 {
-    // TODO: this is a temporary fix for cleaning the window before re-painting it. In the future I think I could do something more optimized, like only erase the parts that I have to (maybe only the channel names and graphs even).
     // This doesn't even wipe everything now because the other windows painted here aren't children of this tab control. I need to figure out how not to repaint stuff that's already painted, or actually delete everything and repaint.
-    static HWND tabCtrl = NULL;
-
-    if (tabCtrl != NULL)
+    if (fileEditor.channelTabs == NULL)
     {
-        DestroyWindow(tabCtrl);
+        PaintFileEditorPermanents();
+    }
+    else
+    {
+        ResetFileEditorPermanents();
     }
     
+    PaintFileEditorTemporaries();
+}
+
+void PaintFileEditorPermanents()
+{
+    fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, mainWindowHandle, NULL, NULL, NULL);
+
+    // Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
+    CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, mainWindowHandle, NULL, NULL, NULL);
+
+    // Adding GUI for choosing what frequency to modify.
+    CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+    fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 130, 428, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+    SetWindowSubclass(fileEditor.fromFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
+    SendMessage(fileEditor.fromFreqTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+    CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 430, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+
+    CreateWindow(WC_STATIC, TEXT("To:"), WS_VISIBLE | WS_CHILD, 270, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+    fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 428, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+    SetWindowSubclass(fileEditor.toFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
+    SendMessage(fileEditor.toFreqTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+    CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 410, 430, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+
+    // Adding GUI for choosing what change to apply.
+    // Adding a dropdown for choosing the change type.
+    CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 475, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+    fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS, 130, 470, 90, 100, mainWindowHandle, NULL, NULL, NULL);
+    SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Multiply"));
+    SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Add"));
+    SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0); // Setting "multiply" as the default selection.
+
+    // Adding a textbox for choosing the change amount.
+    CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD, 270, 475, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+    fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT("0.000"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 473, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+    SetWindowSubclass(fileEditor.changeAmountTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
+    SendMessage(fileEditor.changeAmountTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+
+    // Adding GUI for choosing how much smoothing to apply.
+    CreateWindow(WC_STATIC, TEXT("Smoothing:"), WS_VISIBLE | WS_CHILD, 50, 520, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+    AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), 130, 520,
+        MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.500"), NULL, FALSE);
+
+    // Adding buttons for ok and cancel.
+    // TODO: I'm considering moving these buttons to the center of the screen (horizontally).
+    fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 595, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_UNDO, NULL, NULL);
+    fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 675, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_REDO, NULL, NULL);
+    CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_APPLY, NULL, NULL);
+}
+
+void PaintFileEditorTemporaries()
+{
     // Updating the window title to the open file's name.
     if (IsFileNew(fileEditor.fileInfo))
     {
@@ -538,83 +760,77 @@ void PaintFileEditor()
         SetWindowText(mainWindowHandle, pathCopy);
     }
 
-    tabCtrl = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, mainWindowHandle, NULL, NULL, NULL);
+    // Filling the tab control with the names of the channels this file has instead of the old one.
+    TabCtrl_DeleteAllItems(fileEditor.channelTabs);
 
     TCITEM tab;
     tab.mask = TCIF_PARAM | TCIF_TEXT;
 
     // This fills in the buffer with channel names, and returns how many channels were filled in.
     TCHAR channelNames[MAX_NAMED_CHANNELS][CHANNEL_NAME_BUFFER_LEN];
-    unsigned int numOfChannels = GetChannelNames(fileEditor.fileInfo, channelNames);
+    unsigned short numOfChannels = GetChannelNames(fileEditor.fileInfo, channelNames);
 
-    for (unsigned int i = 0; i < numOfChannels; i++)
+    for (unsigned short i = 0; i < numOfChannels; i++)
     {
         tab.pszText = channelNames[i];
-        TabCtrl_InsertItem(tabCtrl, i, &tab);
+        TabCtrl_InsertItem(fileEditor.channelTabs, i, &tab);
     }
 
-    // Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
-    HWND tabCtrlStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, mainWindowHandle, NULL, NULL, NULL);
-
-    // Adding GUI for choosing what frequency to modify.
-    CreateWindow(WC_STATIC, TEXT("Frequency:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-
-    fileEditor.frequencyTextbox = CreateWindow(WC_EDIT, TEXT("0"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, 130, 428, 65, 22, mainWindowHandle, NULL, NULL, NULL);
-    SendMessage(fileEditor.frequencyTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-    CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 430, 60, 22, mainWindowHandle, NULL, NULL, NULL);
-
-    // Adding GUI for choosing what change to apply.
-    CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 475, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-
-    // Adding a radio menu for choosing between multiply and add modes.
-    fileEditor.multiplyRadio = CreateWindow(WC_BUTTON, TEXT("Multiply"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 110, 470, 80, 30, mainWindowHandle, NULL, NULL, NULL);
-    fileEditor.addRadio = CreateWindow(WC_BUTTON, TEXT("Add"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 190, 470, 50, 30, mainWindowHandle, NULL, NULL, NULL);
-    SendMessage(fileEditor.multiplyRadio, BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
-
-    fileEditor.changeTextbox = CreateWindow(WC_EDIT, TEXT("1"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 250, 473, 65, 22, mainWindowHandle, NULL, NULL, NULL);
-    SetWindowSubclass(fileEditor.changeTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
-    SendMessage(fileEditor.changeTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-
-    // Adding GUI for choosing how much smoothing to apply.
-    CreateWindow(WC_STATIC, TEXT("Smoothing region:"), WS_VISIBLE | WS_CHILD, 50, 520, 130, 22, mainWindowHandle, NULL, NULL, NULL);
-    AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingRangeTrackbar), &(fileEditor.smoothingRangeTextbox), 170, 520,
-        MIN_SMOOTHING_REGION, MAX_SMOOTHING_REGION, DEFAULT_SMOOTHING_REGION, SMOOTHING_REGION_TRACKBAR_LINESIZE, SMOOTHING_REGION_TRACKBAR_PAGESIZE, TEXT(XStringify(DEFAULT_SMOOTHING_REGION)), TEXT("Hz"));
-    
-    // The trackbar for some reason was rendered behind other stuff. This makes it render above.
-    BringWindowToTop(fileEditor.smoothingRangeTrackbar);
-
-    // Adding buttons for ok and cancel.
-    // TODO: I'm considering moving these buttons to the center of the screen (horizontally).
-    CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 595, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_UNDO, NULL, NULL);
-    CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 675, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_REDO, NULL, NULL);
-    CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_APPLY, NULL, NULL);
+    // Editing the tab control brings it to front. This fixes that.
+    SetWindowPos(fileEditor.channelTabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
 }
 
+void ResetFileEditorPermanents()
+{
+    // Resetting all the input controls to their default values.
+    SendMessage(fileEditor.fromFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
+    SendMessage(fileEditor.toFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
+    SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0);
+    SendMessage(fileEditor.changeAmountTextbox, WM_SETTEXT, 0, (LPARAM)TEXT("0.000"));
+    SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING); // This should fire a sync operation which will set the textbox accordingly.
+}
 
 void CloseFileEditor()
 {
-    EraseFileEditor();
     DeallocateChannelsData();
+    DeallocateModificationStack(&(fileEditor.modificationStack));
     CloseWaveFile(fileEditor.fileInfo);
-    ZeroMemory(&fileEditor, sizeof(FileEditor));
+    fileEditor.fileInfo = NULL;
+
+    UpdateUndoRedoState(mainWindowHandle);
 }
 
 void DeallocateChannelsData()
 {
-    WORD relevantChannels = min(fileEditor.fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS);
-
-    for (WORD i = 0; i < relevantChannels; i++)
+    if (fileEditor.channelsData != NULL)
     {
-        DeallocateFunction(fileEditor.channelsData[i]);
-        free(fileEditor.channelsData[i]);
-    }
+        WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
 
-    free(fileEditor.channelsData);
+        for (WORD i = 0; i < relevantChannels; i++)
+        {
+            DeallocateFunctionInternals(fileEditor.channelsData[i]);
+            free(fileEditor.channelsData[i]);
+        }
+
+        free(fileEditor.channelsData);
+        fileEditor.channelsData = NULL;
+    }
 }
 
-void EraseFileEditor()
+void UpdateUndoRedoState(HWND windowHandle)
 {
+    char enableRedo = fileEditor.modificationStack != NULL && fileEditor.modificationStack->next != NULL;
+    char enableUndo = fileEditor.modificationStack != NULL && fileEditor.modificationStack->prev != NULL;
 
+    HMENU menu = GetMenu(windowHandle);
+    EnableMenuItem(menu, NOTIF_CODIFY(EDIT_MENU_REDO), enableRedo ? MF_ENABLED : MF_GRAYED);
+    EnableMenuItem(menu, NOTIF_CODIFY(EDIT_MENU_UNDO), enableUndo ? MF_ENABLED : MF_GRAYED);
+
+    if (fileEditor.channelTabs != NULL)
+    {
+        EnableWindow(fileEditor.redoButton, enableRedo);
+        EnableWindow(fileEditor.undoButton, enableUndo);
+    }
 }
 
 #pragma endregion // MainWindow.
@@ -657,11 +873,11 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
 {
    // Adding trackbar-textbox-units triple for selecting file length.
     AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox), 10, 16,
-        FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_LENGTH)), TEXT("seconds"));
+        FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_LENGTH)), TEXT("seconds"), TRUE);
 
     // Adding trackbar-textbox-units triple for selecting file sample rate.
     AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox), 10, 61,
-        FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_FREQUENCY)), TEXT("Hz"));
+        FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_FREQUENCY)), TEXT("Hz"), TRUE);
 
     // Adding a radio menu for choosing bit depth. Important that we add these such that the i'th cell indicates i+1 bytes.
     newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 18, 95, 80, 30, windowHandle, NULL, NULL, NULL);
@@ -677,7 +893,7 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
 
 void CloseNewFileOptions(HWND windowHandle)
 {
-    // Enabling the parent window and destroying this one.
+    // Enabling the parent window and destroying this one. The ordering is important.
     EnableWindow(newFileOptionsHandles->parent, TRUE);
     free(newFileOptionsHandles);
     newFileOptionsHandles = NULL;
@@ -813,7 +1029,7 @@ void CloseSelectFileOption(HWND windowHandle)
 {
     // Enabling the parent window and destroying this one.
     HWND parent = GetWindow(windowHandle, GW_OWNER);
-    EnableWindow(parent, TRUE);
+    EnableWindow(parent, TRUE); // Important to enable the parent before destroying the child.
     SetActiveWindow(parent); // Sometimes the parent window wasn't given the focus again when you close this window.
     DestroyWindow(windowHandle);
 }
@@ -852,7 +1068,7 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 
 #pragma region Misc
 
-void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units)
+void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units, char naturalsOnly)
 {
     // Calculating tick length given the interval length and how many ticks we want to have. Rounding it up instead of down because I would rather have too few ticks than too many.
     div_t divResult = div(maxValue - minValue, NEW_FILE_TRACKBAR_TICKS);
@@ -868,27 +1084,76 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
     SendMessage(*trackbar, TBM_SETTICFREQ, tickLength, 0); // Configuring how many ticks are on it.
 
     // Adding textbox.
-    *textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_NUMBER | ES_CENTER, xPos + 210, yPos - 2, 65, 22, windowHandle, NULL, NULL, NULL);
+    *textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, xPos + 210, yPos - 2, 65, 22, windowHandle, NULL, NULL, NULL);
     SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
-    CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, xPos + 280, yPos, 60, 22, windowHandle, NULL, NULL, NULL);
+
+    if (naturalsOnly)
+    {
+        SetWindowLongPtr(*textbox, GWL_STYLE, GetWindowLongPtr(*textbox, GWL_STYLE) | ES_NUMBER); // Setting textbox to only accept natural numbers.
+    }
+    else
+    {
+        SetWindowSubclass(*textbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept positive float numbers.
+    }
+
+    // Adding text which says what units the content is in, unless no units were given.
+    if (units != NULL)
+    {
+        CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, xPos + 280, yPos, 60, 22, windowHandle, NULL, NULL, NULL);
+    }
 }
 
 void SyncTextboxToTrackbar(HWND trackbar, HWND textbox)
 {
-    int length = (int)SendMessage(trackbar, TBM_GETPOS, 0, 0);
-    TCHAR lengthStr[16];
-    _itot(length, lengthStr, 10);
-    SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)lengthStr);
+    LRESULT val = (int)SendMessage(trackbar, TBM_GETPOS, 0, 0);
+    TCHAR buffer[16];
+    _ltot(val, buffer, 10);
+    SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
 }
 
 void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
 {
     TCHAR buffer[16];
-    unsigned long int length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
-    int min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
-    int max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
-    length = length > max ? max : (length < min ? min : length); // Clamping length between min and max.
-    SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)length);
+    TCHAR* endChar;
+    LRESULT length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
+    long val = _tcstol(buffer, &endChar, 10);
+
+    // Assigning value to trackbar if the conversion was successful. endChar points to the null terminator iff the conversion is successful or the string is empty.
+    if (length != 0 && endChar == &(buffer[length]))
+    {
+        long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
+        long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
+        val = val > max ? max : (val < min ? min : val); // Clamping length between min and max.
+        SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)val);
+    }
+}
+
+void SyncTextboxToTrackbarFloat(HWND trackbar, HWND textbox)
+{
+    long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
+    long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
+    double val = (((double)SendMessage(trackbar, TBM_GETPOS, 0, 0)) - min) / (max - min); // It's assumed that we want to bring the number to the [0, 1] range.
+
+    TCHAR buffer[16];
+    _stprintf(buffer, 16, TEXT("%.3f"), val);
+    SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
+}
+
+void SyncTrackbarToTextboxFloat(HWND trackbar, HWND textbox)
+{
+    TCHAR buffer[16];
+    TCHAR* endChar;
+    LRESULT length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
+    double val = _tcstod(buffer, &endChar);
+
+    // Assigning value to trackbar if the conversion was successful. endChar points to the iff the conversion is successful.
+    if (length != 0 && endChar == &(buffer[length]))
+    {
+        long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
+        long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
+        val = ClampDouble(min + (val * (max - min)), min, max); // Scaling val and clamping it. It's assumed that val is in [0,1] and we want to scale it to [min, max].
+        SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (long)val);
+    }
 }
 
 LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR subclassId, DWORD_PTR refData)
@@ -917,6 +1182,12 @@ LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
         default:
             return DefSubclassProc(windowHandle, msg, wparam, lparam);
     }
+}
+
+char HasUnsavedChanges()
+{
+    // TODO: if the current save state was freed, it's possible something else was allocated in its stead (however unlikely) which would cause this to not fire even though we want it to.
+    return fileEditor.modificationStack != NULL && fileEditor.modificationStack != fileEditor.currentSaveState;
 }
 
 #pragma endregion // Misc.

@@ -74,23 +74,6 @@ typedef struct WaveformChunk
     WaveformSegment* segments;
 } WaveformChunk;
 
-typedef struct CuePoint
-{
-    DWORD name;
-    DWORD position;
-    FOURCC chunkId;
-    DWORD chunkStart;
-    DWORD blockStart;
-    DWORD sampleOffset;
-} CuePoint;
-
-typedef struct CueChunk
-{
-    ChunkHeader header;
-    DWORD cuePoints;
-    CuePoint* pointsArr;
-} CueChunk;
-
 typedef struct FileInfo
 {
     FILE* file;
@@ -99,9 +82,6 @@ typedef struct FileInfo
     FormatChunk format; 
     WaveformChunk waveform;
     DWORD sampleLength;
-
-    // The following chunks are pointers because they're optional and can be NULL.
-    CueChunk* cue;
 } FileInfo;
 
 // Closes the given file, and deallocates it.
@@ -110,19 +90,19 @@ void CloseWaveFile(FileInfo*);
 // Takes a path to a WAVE file and verifies that it is a WAVE file, then reads its data into memory.
 ReadWaveResult ReadWaveFile(FileInfo**, LPCTSTR);
 
-// Sets internal data about what the current file is according to the given new file creation parameters.
+// Occupies the given FileInfo with data about what the current file is according to the given new file creation parameters.
 void CreateNewFile(FileInfo**, unsigned int, unsigned int, unsigned int);
 
 // Loads the PCM data of the wave file into an array of functions it will allocate at the given address, such that the i'th function corresponds to the i'th channel.
 // The data is loaded "interleaved", meaning each sample is complex, the real parts correspond to even indices of PCM samples, and the imaginary parts correspond to odds.
 // Additionally, zero-padding is added to bring the sample length to a power of two.
-// Returns zero iff it failed to allocate memory for the functions.
+// Returns zero iff there is insufficient memory for the operation.
 char LoadPCMInterleaved(FileInfo*, Function***);
 
-// Writes the modified data from memory back to the file.
-void WriteWaveFile(FileInfo*, Function**);
+// Writes the modified data from memory back to the file. Returns zero iff there is insufficient memory for the operation.
+char WriteWaveFile(FileInfo*, Function**);
 
-// Creates a new file with the modified data that we have in memory.
+// Creates a new file with the modified data that we have in memory. Returns zero iff it failed to create the new file or there was insufficient memory for the operation.
 char WriteWaveFileAs(FileInfo*, LPCTSTR, Function**);
 
 // Check if a file is new, that is it doesn't have any save location associated with it yet.
@@ -131,7 +111,10 @@ char IsFileNew(FileInfo*);
 // Returns nonzero value iff the file is currently being worked on.
 char IsFileOpen(FileInfo*);
 
-// Occupies the array of strings with channel names. Assumes it's large enough to hold MAX_NAMED_CHANNELS strings. I don't like the 24 magic number, but we can't make this TCHAR** so this fixes a bug.
-unsigned int GetChannelNames(FileInfo*, TCHAR[][CHANNEL_NAME_BUFFER_LEN]);
+// Occupies the array of strings with channel names. Assumes it's large enough to hold MAX_NAMED_CHANNELS strings.
+unsigned short GetChannelNames(FileInfo*, TCHAR[][CHANNEL_NAME_BUFFER_LEN]);
+
+// Returns how many editable channels are in this file.
+unsigned short GetRelevantChannelsCount(FileInfo*);
 
 #endif

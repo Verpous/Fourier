@@ -30,12 +30,12 @@ long long RandLong()
 
 double RandRangeDouble(double min, double max)
 {
-    return min + (((RandLong() + 0.5) / (LONG_LONG_MAX - 0.5)) * (max - min));
+    return min + ((((unsigned long long)RandLong()) / ((double)ULONG_LONG_MAX)) * (max - min));
 }
 
 float RandRangeFloat(float min, float max)
 {
-    return min + (((rand() + 0.5) / (INT_MAX - 0.5)) * (max - min));
+    return min + ((((unsigned int)rand()) / ((float)UINT_MAX)) * (max - min));
 }
 
 float ClampFloat(float val, float min, float max)

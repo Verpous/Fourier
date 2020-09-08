@@ -2,6 +2,7 @@
 #define WINDOWS_MANAGER_H
 
 #include "WaveReadWriter.h"
+#include "SoundEditor.h"
 #include <windows.h> // Do I need to explain why this is included?
 
 typedef struct NewFileOptionsWindow
@@ -19,12 +20,18 @@ typedef struct FileEditor
 {   
     FileInfo* fileInfo;
     Function** channelsData; // An array of function pointers. This can be either the waveform or the DFT, we swap between them.
-    HWND frequencyTextbox;
-    HWND changeTextbox;
-    HWND addRadio;
-    HWND multiplyRadio;
-    HWND smoothingRangeTrackbar;
-    HWND smoothingRangeTextbox;
+    Modification* modificationStack; // A stack of all the changes the user applies, for undoing and redoing them.
+    Modification* currentSaveState; // The last change that was saved.
+
+    HWND channelTabs;
+    HWND fromFreqTextbox;
+    HWND toFreqTextbox;
+    HWND changeTypeDropdown;
+    HWND changeAmountTextbox;
+    HWND smoothingTrackbar;
+    HWND smoothingTextbox;
+    HWND undoButton;
+    HWND redoButton;
 } FileEditor;
 
 
@@ -73,6 +80,15 @@ void FileSave(HWND);
 // Prompts the user to select a save location for the edited file, and saves it there.
 void FileSaveAs(HWND);
 
+// Undoes the last change.
+void Undo(HWND);
+
+// Redoes the last undone change.
+void Redo(HWND);
+
+// Applies the modification from the contents of the input controls.
+void ApplyModificationFromInput(HWND);
+
 // Prompts the user to choose if he wants to save his progress before it's lost. Returns zero iff the user chose to abort the operation that was about to cause progress to be lost.
 char PromptSaveProgress();
 
@@ -82,14 +98,23 @@ void InitializeFileEditor();
 // Paints all the GUI for editing the open file onto the main window.
 void PaintFileEditor();
 
+// Paints the parts of the file editor which only need to be painted once, when it is first created.
+void PaintFileEditorPermanents();
+
+// Paints the parts of the file editor that need to be repainted every time a new file is opened.
+void PaintFileEditorTemporaries();
+
+// Resets values inside the permanent parts of the file editor for when new files are opened.
+void ResetFileEditorPermanents();
+
 // Deallocates memory allocated for file editing and erases the editor from the window.
 void CloseFileEditor();
 
 // Frees memory that was reserved for storing the PCM/fourier functions of all the channels.
 void DeallocateChannelsData();
 
-// Un-paints the file editor.
-void EraseFileEditor();
+// Grays and ungrays the undo and redo buttons according to the current program state.
+void UpdateUndoRedoState(HWND windowHandle);
 
 
 // Handler for any messages sent to the new file options dialog.
@@ -125,15 +150,24 @@ void ProcessSelectFileOptionCommand(HWND, WPARAM, LPARAM);
 
 
 // Paints a trackbar-textbox-units triple with the given parameters.
-void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, int, LPCTSTR, LPCTSTR);
+void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, int, LPCTSTR, LPCTSTR, char);
 
-// Sets the length textbox to the number selected in the trackbar.
+// Sets the textbox to display the number selected in the trackbar.
 void SyncTextboxToTrackbar(HWND, HWND);
 
-// Sets the length trackbar to the value written in the textbox.
+// Sets the trackbar position to the value written in the textbox.
 void SyncTrackbarToTextbox(HWND, HWND);
+
+// Sets the textbox to display the number selected in the trackbar, converted to the [0,1] range.
+void SyncTextboxToTrackbarFloat(HWND, HWND);
+
+// Sets the trackbar position to the value written in the textbox, converted from [0,1] to the trackbar's range.
+void SyncTrackbarToTextboxFloat(HWND, HWND);
 
 // Procedure for textboxes that only accept float numbers.
 LRESULT CALLBACK FloatTextboxWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
+// Returns zero iff there are no unsaved changes.
+char HasUnsavedChanges();
 
 #endif
