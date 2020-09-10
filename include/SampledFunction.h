@@ -27,6 +27,7 @@ typedef struct Function_##type                                                  
     FunctionType funcType;                                                                                                  \
     unsigned long long segmentLen;                                                                                          \
     unsigned long long segmentCount;                                                                                        \
+    unsigned long long totalLen;                                                                                            \
     type** samples;                                                                                                         \
 } Function_##type;                                                                                                          \
                                                                                                                             \

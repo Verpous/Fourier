@@ -8,10 +8,14 @@ LFlags:=-Wall -mwindows # Linker Flags. -mwindows means that when you run the pr
 # shlwapi makes PathStripPath work.
 LinkedLibs:=-lcomdlg32 -lksuser -lcomctl32 -lshlwapi
 
-.PHONY: all run runx clean unicode ansi
+.PHONY: all debug unicode ansi run runx runvscode clean
 
 # Default target is unicode
 all: unicode
+
+# Appending -g flag to CFLAGS so files will be compiled with debug information, then compiling for unicode.
+debug: CFlags += -g
+debug: unicode
 
 # Appending UNICODE definition to CFLAGS so everything will use unicode, then compiling.
 unicode: CFlags += -D UNICODE -D _UNICODE
@@ -20,14 +24,14 @@ unicode: bin/fourier
 # Compiling without defining UNICODE means we're targeting ANSI.
 ansi: bin/fourier
 
-bin/fourier: bin/main.o bin/WindowManager.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o
-	$(CC) $(LFlags) bin/main.o bin/WindowManager.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o $(LinkedLibs) -o bin/fourier
+bin/fourier: bin/main.o bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o
+	$(CC) $(LFlags) bin/main.o bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o $(LinkedLibs) -o bin/fourier
 
 bin/main.o: src/main.c
 	$(CC) $(CFlags) -o bin/main.o src/main.c
 
-bin/WindowManager.o: src/WindowManager.c
-	$(CC) $(CFlags) -o bin/WindowManager.o src/WindowManager.c
+bin/WindowsMain.o: src/WindowsMain.c
+	$(CC) $(CFlags) -o bin/WindowsMain.o src/WindowsMain.c
 
 bin/WaveReadWriter.o: src/WaveReadWriter.c
 	$(CC) $(CFlags) -o bin/WaveReadWriter.o src/WaveReadWriter.c
@@ -43,11 +47,11 @@ bin/SampledFunction.o: src/SampledFunction.c
 
 # Compiles and runs. Output streams are redirected to a log.
 run: unicode
-	bin/fourier >>log.log 2>&1
+	bin/fourier >>errors.log 2>&1
 
 # "Run exclusively". Same as run, but won't try to compile it.
 runx:
-	bin/fourier >>log.log 2>&1
+	bin/fourier >>errors.log 2>&1
 
 # Same as run but without the io redirection. Intended for use by the code runner extension in vscode so it can display output.
 runvscode: unicode

@@ -68,7 +68,7 @@ void AllocateWaveFile(FileInfo** fileInfo, LPCTSTR path)
 void CloseWaveFile(FileInfo* fileInfo)
 {
     // Dodging null pointer exceptions like a boss.
-    if (!IsFileOpen(fileInfo))
+    if (fileInfo == NULL)
     {
         return;
     }
@@ -636,12 +636,13 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
         }                                                                                                                                                                                   \
     }                                                                                                                                                                                       \
                                                                                                                                                                                             \
-    /* Zero-padding until we reach that power of two length. This also has the job of occupying all the data for new files.*/                                                               \
+    /* Padding until we reach that power of two length. This also has the job of occupying all the data for new files. We pad what 0 would get converted to, as opposed to 0 itself.*/      \
+    /* TODO: potential optimization - use something like memset to add the zero padding more efficiently than going one by one.*/                                                           \
     for (; sampleIndex < paddedLength; sampleIndex++)                                                                                                                                       \
     {                                                                                                                                                                                       \
         for (WORD c = 0; c < relevantChannels; c++)                                                                                                                                         \
         {                                                                                                                                                                                   \
-            *(CAST(&get(*(funcs##depth[c]), sampleIndex / 2), precision##Real*) + (sampleIndex % 2)) = CAST(0.0, precision##Real);                                                          \
+            *(CAST(&get(*(funcs##depth[c]), sampleIndex / 2), precision##Real*) + (sampleIndex % 2)) = CAST(0.5, precision##Real) / (DEPTH_MAX(depth) + CAST(0.5, precision##Real));        \
         }                                                                                                                                                                                   \
     }
 
@@ -688,7 +689,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
     return TRUE;
 }
 
-char WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
+char WriteWaveFile(FILE* file, FileInfo* fileInfo, Function** channelsData)
 {
     // This macro does most of this function's work, and generalizes it for different byte depths. Needs to be declared at the top before it's used.
     // This function is quite similar to LoadPCMInterleaved, because it essentially inverses it.*/
@@ -751,7 +752,6 @@ char WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
         }                                                                                                                                                                           \
     }
 
-    FILE* file = fileInfo->file;
     WORD relevantChannels = GetRelevantChannelsCount(fileInfo); // The number of channels we're editing.
     WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample; // The amount of bytes each sample effectively takes up.
     WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
@@ -795,16 +795,13 @@ char WriteWaveFile(FileInfo* fileInfo, Function** channelsData)
 
 char WriteWaveFileAs(FileInfo* fileInfo, LPCTSTR path, Function** channelsData)
 {
-    FILE* oldFile = fileInfo->file;
-    FILE* newFile = _tfsopen(path, TEXT("w+b"), _SH_DENYWR);
     char success;
+    FILE* newFile = _tfsopen(path, TEXT("w+b"), _SH_DENYWR);
 
     if (newFile == NULL)
     {
         return FALSE;
     }
-
-    fileInfo->file = newFile;
 
     // For the sake of simplicity, the way this function works is it readies a file with junk values in the data chunk, and then calls WriteWaveFile which saves changes onto existing files.
     // This isn't the most performant way but it is simple and has no code repetition.
@@ -814,22 +811,28 @@ char WriteWaveFileAs(FileInfo* fileInfo, LPCTSTR path, Function** channelsData)
     }
     else
     {
-        success = CopyWaveFile(newFile, oldFile);
+        success = CopyWaveFile(newFile, fileInfo->file);
     }
 
     // In case of failure to write the new file, reverting to how things were before.
-    if (!success || !WriteWaveFile(fileInfo, channelsData))
+    if (!success || !WriteWaveFile(newFile, fileInfo, channelsData))
     {
         fclose(newFile);
         _tremove(path);
-        fileInfo->file = oldFile;
         return FALSE;
     }
 
-    if (oldFile != NULL)
+    // If the file isn't new, want to free resources from the last file.
+    if (!IsFileNew(fileInfo))
     {
-        fclose(oldFile);
+        fclose(fileInfo->file);
+        free(fileInfo->path);
     }
+    
+    // Assigning values from the new file into fileInfo.
+    fileInfo->file = newFile;
+    fileInfo->path = malloc(sizeof(TCHAR) * (_tcslen(path) + 1));
+    _tcscpy(fileInfo->path, path);
 
     return TRUE;
 }
@@ -890,12 +893,7 @@ char CopyWaveFile(FILE* dest, FILE* src)
 
 char IsFileNew(FileInfo* fileInfo)
 {
-    return IsFileOpen(fileInfo) && fileInfo->path == NULL;
-}
-
-char IsFileOpen(FileInfo* fileInfo)
-{
-    return fileInfo != NULL;
+    return fileInfo != NULL && fileInfo->file == NULL;
 }
 
 unsigned short GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][CHANNEL_NAME_BUFFER_LEN])

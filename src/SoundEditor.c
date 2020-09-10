@@ -112,7 +112,7 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 {
     #define APPLY_MODIFICATION_INTERNAL_TYPED(precision)                                                                                                            \
     Function_##precision##Complex channelData = *(((Function_##precision##Complex**)channelsData)[modification->channel]);                                          \
-    unsigned long long length = NumOfSamples(&channelData);                                                                                                         \
+    unsigned long long length = NumOfSamples(modification->oldFunc);                                                                                                \
     unsigned long long startSample = modification->startSample;                                                                                                     \
     precision##Real smoothing = modification->smoothing, changeAmount = modification->changeAmount;                                                                 \
                                                                                                                                                                     \

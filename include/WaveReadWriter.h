@@ -100,16 +100,13 @@ void CreateNewFile(FileInfo**, unsigned int, unsigned int, unsigned int);
 char LoadPCMInterleaved(FileInfo*, Function***);
 
 // Writes the modified data from memory back to the file. Returns zero iff there is insufficient memory for the operation.
-char WriteWaveFile(FileInfo*, Function**);
+char WriteWaveFile(FILE*, FileInfo*, Function**);
 
 // Creates a new file with the modified data that we have in memory. Returns zero iff it failed to create the new file or there was insufficient memory for the operation.
 char WriteWaveFileAs(FileInfo*, LPCTSTR, Function**);
 
 // Check if a file is new, that is it doesn't have any save location associated with it yet.
 char IsFileNew(FileInfo*);
-
-// Returns nonzero value iff the file is currently being worked on.
-char IsFileOpen(FileInfo*);
 
 // Occupies the array of strings with channel names. Assumes it's large enough to hold MAX_NAMED_CHANNELS strings.
 unsigned short GetChannelNames(FileInfo*, TCHAR[][CHANNEL_NAME_BUFFER_LEN]);

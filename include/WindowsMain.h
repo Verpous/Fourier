@@ -38,6 +38,7 @@ typedef struct FileEditor
 // Registers classes and creates the main window.
 char InitializeWindows(HINSTANCE);
 
+// Registers all of our classes.
 char RegisterClasses(HINSTANCE);
 
 // Registers the class for the main window of our program.
@@ -113,8 +114,12 @@ void CloseFileEditor();
 // Frees memory that was reserved for storing the PCM/fourier functions of all the channels.
 void DeallocateChannelsData();
 
+// Sets the title of the main window to display the current open file's name.
+void UpdateWindowTitle();
+
 // Grays and ungrays the undo and redo buttons according to the current program state.
 void UpdateUndoRedoState(HWND windowHandle);
+
 
 
 // Handler for any messages sent to the new file options dialog.

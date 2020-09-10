@@ -19,27 +19,35 @@
 #include <math.h> // for min.
 
 // Important to use a power of two here.
-#define MAX_SEGMENT_LEN MEGAS(32)
+#define MAX_SEGMENT_LEN MEGAS(16)
 
-// TODO: allocatefunction doesn't calculate segment count and length well for non-powers-of-two.
 #define SAMPLED_FUNCTION_C_TYPED_CONTENTS(type)                                                                                                         \
 char AllocateFunctionInternals_##type(Function_##type* f, unsigned long long length)                                                                    \
 {                                                                                                                                                       \
     f->funcType = type##Type;                                                                                                                           \
+                                                                                                                                                        \
+    /* Choosing the segment length and count such that we can hold at least 'length' many samples.*/                                                    \
+    f->totalLen = length;                                                                                                                               \
     f->segmentLen = min(length, MAX_SEGMENT_LEN);                                                                                                       \
-    f->segmentCount = length / f->segmentLen;                                                                                                           \
+    f->segmentCount = (length / f->segmentLen) + (length % f->segmentLen == 0 ? 0 : 1);                                                                 \
                                                                                                                                                         \
     if ((f->samples = calloc(f->segmentCount, sizeof(type*))) == NULL)                                                                                  \
     {                                                                                                                                                   \
         return FALSE;                                                                                                                                   \
     }                                                                                                                                                   \
                                                                                                                                                         \
-    for (unsigned long i = 0; i < f->segmentCount; i++)                                                                                                 \
+    for (unsigned long i = 0; i < f->segmentCount - 1; i++)                                                                                             \
     {                                                                                                                                                   \
         if ((f->samples[i] = malloc(sizeof(type) * f->segmentLen)) == NULL)                                                                             \
         {                                                                                                                                               \
             return FALSE;                                                                                                                               \
         }                                                                                                                                               \
+    }                                                                                                                                                   \
+                                                                                                                                                        \
+    /* The last segment may be shorter than segmentLen. Its size is however many samples are left to allocate for.*/                                    \
+    if ((f->samples[f->segmentCount - 1] = malloc(sizeof(type) * (f->totalLen - ((f->segmentCount - 1) * f->segmentLen)))) == NULL)                     \
+    {                                                                                                                                                   \
+        return FALSE;                                                                                                                                   \
     }                                                                                                                                                   \
                                                                                                                                                         \
     return TRUE;                                                                                                                                        \
@@ -61,7 +69,7 @@ void DeallocateFunctionInternals_##type(Function_##type* f)                     
                                                                                                                                                         \
 Function_##type* CreatePartialClone_##type(Function_##type* f, unsigned long long from, unsigned long long to)                                          \
 {                                                                                                                                                       \
-    Function_##type* clone = malloc(sizeof(type));                                                                                                      \
+    Function_##type* clone = malloc(sizeof(Function_##type));                                                                                           \
                                                                                                                                                         \
     if (AllocateFunctionInternals_##type(clone, to - from + 1)) /* +1 because we're editing [from, to] (inclusive).*/                                   \
     {                                                                                                                                                   \
@@ -77,6 +85,7 @@ Function_##type* CreatePartialClone_##type(Function_##type* f, unsigned long lon
     return clone;                                                                                                                                       \
 }                                                                                                                                                       \
                                                                                                                                                         \
+/* TODO: potential optimization - use memcpy to work on large chunks at a time instead of one by one using get which is slow.*/                         \
 void CopySamples_##type(Function_##type dest, Function_##type src, unsigned long long destFrom, unsigned long long srcFrom, unsigned long long length)  \
 {                                                                                                                                                       \
     for (unsigned long long i = 0; i < length; i++)                                                                                                     \
@@ -87,9 +96,9 @@ void CopySamples_##type(Function_##type dest, Function_##type src, unsigned long
 
 unsigned long long NumOfSamples(Function* f)
 {
-    // The segment count and length are in the same place no matter what type f has, so we just cast it so some type and read it that way.
-    Function_FloatComplex* castedF = (Function_FloatComplex*)f;
-    return castedF->segmentCount * castedF->segmentLen;
+    // The total length is in the same place no matter what type f has, so we just cast it so some type and read it that way.
+    // This function is sort of here for legacy reasons. It used to take a calculation to get this value but now it's just stored inside the struct.
+    return ((Function_FloatComplex*)f)->totalLen;
 }
 
 FunctionType GetType(Function* f)

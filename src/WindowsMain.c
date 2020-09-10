@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#include "WindowManager.h"
+#include "WindowsMain.h"
 #include <stdio.h> // For printing errors and such.
 #include <commctrl.h> // For some trackbar-related things.
 #include <tchar.h> // For dealing with unicode and ANSI strings.
@@ -433,7 +433,11 @@ void FileOpen(HWND windowHandle)
 
 void FileSave(HWND windowHandle)
 {
-    if (HasUnsavedChanges())
+    if (IsFileNew(fileEditor.fileInfo))
+    {
+        FileSaveAs(windowHandle);
+    }
+    else if (HasUnsavedChanges()) // TODO: make the code inside here loop until a success or the user decides to accept the failure.
     {
         // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
         WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
@@ -443,23 +447,20 @@ void FileSave(HWND windowHandle)
             InverseRealInterleavedFFT(fileEditor.channelsData[i]);
         }
 
-        if (IsFileNew(fileEditor.fileInfo))
+        if (WriteWaveFile(fileEditor.fileInfo->file, fileEditor.fileInfo, fileEditor.channelsData))
         {
-            FileSaveAs(windowHandle);
+            fileEditor.currentSaveState = fileEditor.modificationStack;
         }
         else
         {
-            // TODO: maybe catch errors with things like memory allocations in writing files, and pop an error message when it happens.
-            WriteWaveFile(fileEditor.fileInfo, fileEditor.channelsData);
+            MessageBox(windowHandle, TEXT("There is insufficient memory for saving this file."), NULL, MB_ICONERROR | MB_OK);
         }
-
+        
         // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to re-FFT only channels we need (?).
         for (WORD i = 0; i < relevantChannels; i++)
         {
             RealInterleavedFFT(fileEditor.channelsData[i]);
         }
-
-        fileEditor.currentSaveState = fileEditor.modificationStack;
     }
 }
 
@@ -471,7 +472,7 @@ void FileSaveAs(HWND windowHandle)
     ofn.lStructSize = sizeof(OPENFILENAME);
     ofn.hwndOwner = windowHandle;
     ofn.lpstrFile = filename;
-    ofn.nMaxFile = MAX_PATH;
+    ofn.nMaxFile = MAX_PATH - 4; // We subtract 4 from the max_path so we have spare room to append .wav in if need be.
     ofn.lpstrFilter = FILE_FILTER;
 
     // The rest of the code is in a loop because if the operation fails I give the user an option to choose to retry.
@@ -482,6 +483,15 @@ void FileSaveAs(HWND windowHandle)
 
         if (GetSaveFileName(&ofn))
         {
+            // Appending .wav to the end of the path if it isn't there.
+            size_t pathLen = _tcslen(filename);
+
+            if ((pathLen < 4 || _tcscmp(&(filename[pathLen - 4]), TEXT(".wav")) != 0) &&
+                (pathLen < 5 ||  _tcscmp(&(filename[pathLen - 5]), TEXT(".wave")) != 0))
+            {
+                _tcscat(filename, TEXT(".wav"));
+            }
+
             // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
             WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
 
@@ -501,6 +511,7 @@ void FileSaveAs(HWND windowHandle)
                 }
 
                 fileEditor.currentSaveState = fileEditor.modificationStack;
+                UpdateWindowTitle();
                 break;
             }
             else
@@ -524,11 +535,20 @@ void FileSaveAs(HWND windowHandle)
         else
         {
             DWORD error = CommDlgExtendedError();
+
+            // This happens when the dialog failed because the user clicked cancel.
+            if (!error)
+            {
+                break;
+            }
+
             fprintf(stderr, "GetSaveFileName failed with error code %lX\n", error);
             
             if (error == FNERR_BUFFERTOOSMALL)
             {
-                int choice = MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH)) TEXT(" characters."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
+                LPCTSTR msg = error == FNERR_BUFFERTOOSMALL ?   TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH - 4)) TEXT(" characters.") :
+                                                                TEXT("There was an error in retrieving the file name.");
+                int choice = MessageBox(windowHandle, msg, NULL, MB_RETRYCANCEL | MB_ICONERROR);
 
                 if (choice == IDCANCEL)
                 {
@@ -578,11 +598,12 @@ void ApplyModificationFromInput(HWND windowHandle)
     }
 
     // Reading the change type.
-    ChangeType changeType = SendMessage(fileEditor.changeTypeDropdown, CB_GETCURSEL, 0, 0) == 0 ? MULTIPLY : ADD;
+    LRESULT changeSelection = SendMessage(fileEditor.changeTypeDropdown, CB_GETCURSEL, 0, 0);
+    ChangeType changeType = changeSelection == 0 ? MULTIPLY : ADD;
 
-    // Reading the change amount.
+    // Reading the change amount. If the user selected the "subtract" option, I multiply the amount by -1.
     length = SendMessage(fileEditor.changeAmountTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
-    double changeAmount = _tcstod(buffer, &endChar);
+    double changeAmount = _tcstod(buffer, &endChar) * (changeSelection == 2 ? -1.0 : 1.0);
 
     if (length == 0 || endChar != &(buffer[length]))
     {
@@ -595,7 +616,6 @@ void ApplyModificationFromInput(HWND windowHandle)
 
     // Reading the current channel.
     unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
-    fprintf(stderr, "current channel is 0x%X.\n", (unsigned int)currentChannel);
 
     // Converting fromFreq and toFreq from real frequencies to integer sample numbers.
     // The total samples is twice what it says because this is a real FFT so we only store half the samples, the other half is conjugate symmetric.
@@ -721,6 +741,7 @@ void PaintFileEditorPermanents()
     fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS, 130, 470, 90, 100, mainWindowHandle, NULL, NULL, NULL);
     SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Multiply"));
     SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Add"));
+    SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Subtract"));
     SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0); // Setting "multiply" as the default selection.
 
     // Adding a textbox for choosing the change amount.
@@ -743,22 +764,7 @@ void PaintFileEditorPermanents()
 
 void PaintFileEditorTemporaries()
 {
-    // Updating the window title to the open file's name.
-    if (IsFileNew(fileEditor.fileInfo))
-    {
-        SetWindowText(mainWindowHandle, TEXT("Untitled") TITLE_POSTFIX);
-    }
-    else
-    {
-        // Extracting the file name from the full path, and appending " - Fourier".
-        // I decided not to impose a length limit because I fear cutting a unicode string in the middle might ruin it. Worst comes to worst, users get a long ass string at the top of the screen.
-        unsigned int len = _tcslen(fileEditor.fileInfo->path);
-        TCHAR pathCopy[len + _tcslen(TITLE_POSTFIX) + 1]; // Allocating enough for the path name, the postfix, and the null terminator.
-        _tcscpy(pathCopy, fileEditor.fileInfo->path);
-        PathStripPath(pathCopy);
-        _tcscat(pathCopy, TITLE_POSTFIX);
-        SetWindowText(mainWindowHandle, pathCopy);
-    }
+    UpdateWindowTitle();
 
     // Filling the tab control with the names of the channels this file has instead of the old one.
     TabCtrl_DeleteAllItems(fileEditor.channelTabs);
@@ -814,6 +820,25 @@ void DeallocateChannelsData()
 
         free(fileEditor.channelsData);
         fileEditor.channelsData = NULL;
+    }
+}
+
+void UpdateWindowTitle()
+{
+    if (fileEditor.fileInfo == NULL || IsFileNew(fileEditor.fileInfo))
+    {
+        SetWindowText(mainWindowHandle, TEXT("Untitled") TITLE_POSTFIX);
+    }
+    else
+    {
+        // Extracting the file name from the full path, and appending " - Fourier".
+        // I decided not to impose a length limit because I fear cutting a unicode string in the middle might ruin it. Worst comes to worst, users get a long ass string at the top of the screen.
+        unsigned int len = _tcslen(fileEditor.fileInfo->path);
+        TCHAR pathCopy[len + _tcslen(TITLE_POSTFIX) + 1]; // Allocating enough for the path name, the postfix, and the null terminator.
+        _tcscpy(pathCopy, fileEditor.fileInfo->path);
+        PathStripPath(pathCopy);
+        _tcscat(pathCopy, TITLE_POSTFIX);
+        SetWindowText(mainWindowHandle, pathCopy);
     }
 }
 
@@ -1048,7 +1073,7 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
                     FileOpen(windowHandle);
 
                     // If the FileOpen operation was a success, closing this menu.
-                    if (IsFileOpen(fileEditor.fileInfo))
+                    if (fileEditor.fileInfo != NULL)
                     {
                         CloseSelectFileOption(windowHandle);
                     }
