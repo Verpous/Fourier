@@ -61,13 +61,7 @@
 #define FREQUENCY_TRACKBAR_LINESIZE 50
 #define FREQUENCY_TRACKBAR_PAGESIZE 1000
 
-// Smoothing region is also in hertz.
-#define MIN_SMOOTHING_REGION 1
-#define MAX_SMOOTHING_REGION 1000 // TODO: make unlimited? or dependent on frequency of file? or keep as is?
-#define DEFAULT_SMOOTHING_REGION 250
-#define SMOOTHING_REGION_TRACKBAR_LINESIZE 5
-#define SMOOTHING_REGION_TRACKBAR_PAGESIZE 50
-
+// Smoothing is unitless, and is in fact in the [0,1] range, so MAX_SMOOTHING isn't actually the max smoothing it's just how precise can you get between [0,1].
 #define MIN_SMOOTHING 0
 #define MAX_SMOOTHING 1000
 #define DEFAULT_SMOOTHING 500
@@ -503,8 +497,6 @@ void FileSaveAs(HWND windowHandle)
             if (WriteWaveFileAs(fileEditor.fileInfo, filename, fileEditor.channelsData))
             {
                 // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
-                WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
-
                 for (WORD i = 0; i < relevantChannels; i++)
                 {
                     RealInterleavedFFT(fileEditor.channelsData[i]);
@@ -517,8 +509,6 @@ void FileSaveAs(HWND windowHandle)
             else
             {
                 // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
-                WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
-
                 for (WORD i = 0; i < relevantChannels; i++)
                 {
                     RealInterleavedFFT(fileEditor.channelsData[i]);

@@ -45,38 +45,6 @@
 #define RootOfUnity_DoubleComplex(k, N) cexp_DoubleComplex((CAST(-2.0 * M_PI, DoubleComplex)  * I * (k)) / (N))
 #define RootOfUnity_FloatComplex(k, N) cexp_FloatComplex((CAST(-2.0 * M_PI, FloatComplex)  * I * (k)) / (N))
 
-void RealInterleavedFFT(Function* f)
-{
-    switch (GetType(f))
-    {
-        case FloatComplexType:
-            RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
-            break;
-        case DoubleComplexType:
-            RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
-            break;
-        default:
-            fprintf(stderr, "Tried to FFT an invalid type.\n");
-            break;
-    }
-}
-
-void InverseRealInterleavedFFT(Function* f)
-{
-    switch (GetType(f))
-    {
-        case FloatComplexType:
-            InverseRealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
-            break;
-        case DoubleComplexType:
-            InverseRealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
-            break;
-        default:
-            fprintf(stderr, "Tried to IFFT an invalid type.\n");
-            break;
-    }
-}
-
 char ApplyModification(unsigned long long fromSample, unsigned long long toSample, ChangeType changeType, double changeAmount, double smoothing, unsigned short channel, Function** channelsData, Modification** modificationStack)
 {
     // Deallocating changes that were applied and then undone. A new modification means a new branching of the modifications tree, and we are only interested in the path of the tree we're currently on.
@@ -300,7 +268,7 @@ unsigned long long BitReverse(unsigned int digits, unsigned long long n)
     for (i = 0; (2 * i) + 1 < digits; i++, mask <<= 1)
     {
         unsigned long long bit = mask & n;
-        bit <<= digits - 1 - i;
+        bit <<= digits - (2 * i) - 1;
         reversed |= bit;
     }
 
@@ -308,11 +276,43 @@ unsigned long long BitReverse(unsigned int digits, unsigned long long n)
     for (; i < digits; i++, mask <<= 1)
     {
         unsigned long long bit = mask & n;
-        bit >>= digits - 1 - i;
+        bit >>= (2 * i) + 1 - digits;
         reversed |= bit;
     }
 
     return reversed;
+}
+
+void RealInterleavedFFT(Function* f)
+{
+    switch (GetType(f))
+    {
+        case FloatComplexType:
+            RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
+            break;
+        case DoubleComplexType:
+            RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+            break;
+        default:
+            fprintf(stderr, "Tried to FFT an invalid type.\n");
+            break;
+    }
+}
+
+void InverseRealInterleavedFFT(Function* f)
+{
+    switch (GetType(f))
+    {
+        case FloatComplexType:
+            InverseRealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
+            break;
+        case DoubleComplexType:
+            InverseRealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+            break;
+        default:
+            fprintf(stderr, "Tried to IFFT an invalid type.\n");
+            break;
+    }
 }
 
 #define SOUND_EDITOR_C_TYPED_CONTENTS(type)                                                                                                             \
@@ -329,7 +329,7 @@ void BitReverseArr_##type(Function_##type f)                                    
         /* Avoiding reversing the same thing twice.*/                                                                                                   \
         if (reversed > i)                                                                                                                               \
         {                                                                                                                                               \
-            double complex temp = get(f, i);                                                                                                            \
+            type temp = get(f, i);                                                                                                                      \
             get(f, i) = get(f, reversed);                                                                                                               \
             get(f, reversed) = temp;                                                                                                                    \
         }                                                                                                                                               \
@@ -342,10 +342,11 @@ void RealInterleavedFFT_##type(Function_##type f)                               
     FFT_##type(f);                                                                                                                                      \
                                                                                                                                                         \
     /* Applying postprocessing to extract the DFT of the original function from the DFT of the interleaved one.*/                                       \
-    /* The math is according to the document linked above.*/                                                                                            \
-    /* get(f, 0) is a special case because there is no get(f, len - 0)*/                                                                                \
+    /* The math is according to the document linked in the header for this function.*/                                                                  \
+    /* get(f, 0) is a special case because there is no get(f, len - 0).*/                                                                               \
     get(f, 0) = CAST(0.5, type) * ((get(f, 0) * CAST(1.0 - I, type)) + (conj_##type(get(f, 0)) * CAST(1.0 + I, type)));                                 \
                                                                                                                                                         \
+    /* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/                                                       \
     for (unsigned long long k = 1; k < len / 2; k++)                                                                                                    \
     {                                                                                                                                                   \
         type fOfK = get(f, k);                                                                                                                          \
@@ -366,9 +367,10 @@ void InverseRealInterleavedFFT_##type(Function_##type f)                        
                                                                                                                                                         \
     /* Applying preprocessing to revert back to the DFT of the interleaved function.*/                                                                  \
     /* The math is from the same document as the one I used for the forward transform.*/                                                                \
-    /* get(f, 0) is a special case because there is no get(f, len - 0)*/                                                                                \
+    /* get(f, 0) is a special case because there is no get(f, len - 0).*/                                                                               \
     get(f, 0) = CAST(0.5, type) * ((get(f, 0) * CAST(1.0 + I, type)) + (conj_##type(get(f, 0)) * CAST(1.0 - I, type)));                                 \
                                                                                                                                                         \
+    /* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/                                                       \
     for (unsigned long long k = 1; k < len / 2; k++)                                                                                                    \
     {                                                                                                                                                   \
         type fOfK = get(f, k);                                                                                                                          \
@@ -413,7 +415,7 @@ void FFT_##type(Function_##type f)                                              
             {                                                                                                                                           \
                 /* i serves as a sort of "base" for the current tree. i + k is the k'th element in the (i / stride)'th tree of this level.*/            \
                 type evenSum = get(f, i + k);                                                                                                           \
-                type oddSum = RootOfUnity_##type(k, stride) * get(f,i + k + halfStride); /* TODO: roots of unity can be cached at memory expense.*/     \
+                type oddSum = RootOfUnity_##type(k, stride) * get(f, i + k + halfStride); /* TODO: roots of unity can be cached at memory expense.*/    \
                 get(f, i + k) = evenSum + oddSum;                                                                                                       \
                 get(f, i + k + halfStride) = evenSum - oddSum;                                                                                          \
             }                                                                                                                                           \

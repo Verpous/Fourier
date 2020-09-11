@@ -519,7 +519,6 @@ void CreateNewFile(FileInfo** fileInfo, unsigned int length, unsigned int freque
 
     // Configuring the wave header.
     // Note: when calculating file size, there's no way that it exceeds 4GB because of the limits we impose on frequency, length, and byte depth. It's not even close.
-    // TODO: not sure about adding dataLength % 2 to the size. The idea is that it would be the padding byte for chunks of odd lengths but is it necessary if it's the last chunk in the file?
     (*fileInfo)->header.chunkHeader.id = FOURCC_RIFF;
     (*fileInfo)->header.chunkHeader.size = sizeof(FOURCC) + sizeof(FormatChunk) + sizeof(ChunkHeader) + dataLength + (dataLength % 2);
     (*fileInfo)->header.id = FOURCC_WAVE;
@@ -559,7 +558,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 {
     // This macro is basically this entire function, except for all the different byte depths we can have.
     #define LOAD_PCM_INTERLEAVED_TYPED(precision, depth)                                                                                                                                    \
-    *channelsData = calloc(relevantChannels, sizeof(Function*));                                                                                                                            \
+    *channelsData = calloc(relevantChannels, sizeof(Function_##precision##Complex*));                                                                                                       \
                                                                                                                                                                                             \
     for (WORD i = 0; i < relevantChannels; i++)                                                                                                                                             \
     {                                                                                                                                                                                       \
@@ -649,7 +648,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
     // This is where the function actually starts executing from. The macro needs to be above it.
     FILE* file = fileInfo->file;
     WORD relevantChannels = GetRelevantChannelsCount(fileInfo); // The number of channels we want to load.
-    WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample; // The amount of bytes each sample effectively takes up.
+    WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample / 8; // The amount of bytes each sample effectively takes up.
     WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
     WORD blockAlign = fileInfo->format.contents.Format.nBlockAlign; // The amount of bytes each block of one sample per channel takes up.
     unsigned long long paddedLength = NextPowerOfTwo(fileInfo->sampleLength); // The sample length of a channel of data, rounded up to the next power of two.
@@ -657,7 +656,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
     DWORD segmentsLength = fileInfo->waveform.segmentsLength;
     WaveformSegment* segments = fileInfo->waveform.segments;
     size_t bufferBlockLen = FILE_READING_BUFFER_LEN / blockAlign; // The buffer length is such that this will never be 0.
-    void* buffer = malloc(bufferBlockLen * blockAlign); // Buffer size is the closest number less/equal to FILE_READING_BUFFER_LEN that divides by blockAlign.
+    void* buffer = malloc(bufferBlockLen * blockAlign); // Buffer size is the largest number less/equal to FILE_READING_BUFFER_LEN that divides by blockAlign.
     unsigned long long sampleIndex = 0; // This is actually sort of double the index. It'll be more clear in the comments inside the macro it's used in.
 
     if (buffer == NULL)
@@ -753,14 +752,14 @@ char WriteWaveFile(FILE* file, FileInfo* fileInfo, Function** channelsData)
     }
 
     WORD relevantChannels = GetRelevantChannelsCount(fileInfo); // The number of channels we're editing.
-    WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample; // The amount of bytes each sample effectively takes up.
+    WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample / 8; // The amount of bytes each sample effectively takes up.
     WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
     WORD blockAlign = fileInfo->format.contents.Format.nBlockAlign; // The amount of bytes each block of one sample per channel takes up.
     
     DWORD segmentsLength = fileInfo->waveform.segmentsLength;
     WaveformSegment* segments = fileInfo->waveform.segments;
     size_t bufferBlockLen = FILE_READING_BUFFER_LEN / blockAlign; // The buffer length is such that this will never be 0.
-    void* buffer = malloc(bufferBlockLen * blockAlign); // Buffer size is the closest number less/equal to FILE_READING_BUFFER_LEN that divides by blockAlign.
+    void* buffer = malloc(bufferBlockLen * blockAlign); // Buffer size is the largest number less/equal to FILE_READING_BUFFER_LEN that divides by blockAlign.
     unsigned long long sampleIndex = 0; // This is actually sort of double the index. It'll be more clear in the comments inside the macro it's used in.
 
     if (buffer == NULL)

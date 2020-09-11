@@ -21,12 +21,6 @@ typedef struct Modification
     struct Modification* next; /* The modification after this one.*/
 } Modification;
 
-// Applies an FFT to the function assuming that it's a real function in complex interleaved form.
-void RealInterleavedFFT(Function*);
-
-// Applies an IFFT to the function assuming it's a real function in complex interleaved form.
-void InverseRealInterleavedFFT(Function*);
-
 // Applies a modification to the function in the given channel and stores the modification in the modifications stack. Returns zero iff there was a memory allocation error.
 char ApplyModification(unsigned long long, unsigned long long, ChangeType, double, double, unsigned short, Function**, Modification**);
 
@@ -41,5 +35,11 @@ void InitializeModificationStack(Modification**);
 
 // Deallocates the given modification stack.
 void DeallocateModificationStack(Modification**);
+
+// Applies an FFT to the function assuming that it's a real function in complex interleaved form.
+void RealInterleavedFFT(Function*);
+
+// Applies an IFFT to the function assuming it's a real function in complex interleaved form.
+void InverseRealInterleavedFFT(Function*);
 
 #endif
