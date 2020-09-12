@@ -118,7 +118,7 @@ void DeallocateChannelsData();
 void UpdateWindowTitle();
 
 // Grays and ungrays the undo and redo buttons according to the current program state.
-void UpdateUndoRedoState(HWND windowHandle);
+void UpdateUndoRedoState();
 
 
 

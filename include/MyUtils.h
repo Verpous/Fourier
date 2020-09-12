@@ -1,3 +1,6 @@
+#ifndef MY_UTILS_H
+#define MY_UTILS_H
+
 #include <windows.h>
 
 #define KILO (1 << 10)
@@ -8,7 +11,14 @@
 #define MEGAS(k) ((k) * MEGA)
 #define GIGAS(k) ((k) * GIGA)
 
-#define CAST(f, type) ((type)(f))
+// Casts x to type, sometimes it's prettier and easier to type this way.
+#define CAST(x, type) ((type)(x))
+
+// Turns any text you give it into a string.
+#define Stringify(x) #x
+
+// Like stringify, but it will stringify macro values instead of names if you give it a macro.
+#define XStringify(x) Stringify(x)
 
 // Returns a random int in the range [min, max).
 int RandRange(int, int);
@@ -45,3 +55,8 @@ unsigned int CountLeadingZeroes(unsigned long long);
 
 // Returns the smallest power of two that's greater/equal to the given number.
 unsigned long long NextPowerOfTwo(unsigned long long);
+
+// Returns TRUE iff a file with the given path (path includes the filename) exists.
+char FileExists(LPCTSTR path);
+
+#endif

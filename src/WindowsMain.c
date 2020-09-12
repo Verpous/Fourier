@@ -15,21 +15,16 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "WindowsMain.h"
+#include "MyUtils.h"
 #include <stdio.h> // For printing errors and such.
 #include <commctrl.h> // For some trackbar-related things.
 #include <tchar.h> // For dealing with unicode and ANSI strings.
 #include <shlwapi.h> // For PathStipPath.
 
-// Turns any text you give it into a string.
-#define Stringify(x) #x
-
-// Like stringify, but it will stringify macro values instead of names if you give it a macro.
-#define XStringify(x) Stringify(x)
-
 // Takes a notification code and returns it as an HMENU that uses the high word so it works the same as system notification codes.
 #define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
 
-// The following are notification codes. Codes below 0x8000 are reserved.
+// The following are notification codes. Codes below 0x8000 are reserved by Windows.
 #define FILE_MENU_NEW 0x8001
 #define FILE_MENU_OPEN 0x8002
 #define FILE_MENU_SAVE 0x8003
@@ -68,8 +63,10 @@
 #define SMOOTHING_TRACKBAR_LINESIZE 1
 #define SMOOTHING_TRACKBAR_PAGESIZE 10
 
-#define NEW_FILE_TRACKBAR_TICKS 11 // How many ticks we want to have in a trackbar.
+// How many ticks we want to have in a trackbar.
+#define TRACKBAR_TICKS 11
 
+// WindowClass names.
 #define WC_MAINWINDOW TEXT("MainWindow")
 #define WC_NEWFILEOPTIONS TEXT("NewFileOptions")
 #define WC_SELECTFILEOPTION TEXT("SelectFileOption")
@@ -221,8 +218,8 @@ void AddMainWindowMenus(HWND windowHandle)
     // Appending file menu options.
     AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_NEW), TEXT("New\tCtrl+N"));
     AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_OPEN), TEXT("Open\tCtrl+O"));
-    AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_SAVE), TEXT("Save\tCtrl+S"));
-    AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_SAVEAS), TEXT("Save as\tCtrl+Shift+S"));
+    AppendMenu(fileMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(FILE_MENU_SAVE), TEXT("Save\tCtrl+S"));
+    AppendMenu(fileMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(FILE_MENU_SAVEAS), TEXT("Save as\tCtrl+Shift+S"));
     AppendMenu(fileMenuHandler, MF_SEPARATOR, 0, NULL); // Separator between exit and all the other options.
     AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_EXIT), TEXT("Exit"));
 
@@ -456,7 +453,11 @@ void FileSave(HWND windowHandle)
             RealInterleavedFFT(fileEditor.channelsData[i]);
         }
     }
+
+    UpdateWindowTitle();
 }
+
+#include <unistd.h>
 
 void FileSaveAs(HWND windowHandle)
 {
@@ -483,7 +484,23 @@ void FileSaveAs(HWND windowHandle)
             if ((pathLen < 4 || _tcscmp(&(filename[pathLen - 4]), TEXT(".wav")) != 0) &&
                 (pathLen < 5 ||  _tcscmp(&(filename[pathLen - 5]), TEXT(".wave")) != 0))
             {
-                _tcscat(filename, TEXT(".wav"));
+                _tcscat_s(filename, MAX_PATH, TEXT(".wav"));
+            }
+
+            // Checking if the file already exists and popping a warning if it does.
+            if (FileExists(filename))
+            {
+                int choice = MessageBox(windowHandle, TEXT("The existing file will be overwritten by this operation. Proceed anyway?"), TEXT("Warning"), MB_YESNOCANCEL | MB_ICONWARNING);
+
+                // Using an if statement instead of switch statement because I need to be able to use break here and not have it only break from the switch.
+                if (choice == IDCANCEL)
+                {
+                    break;
+                }
+                else if (choice == IDNO)
+                {
+                    continue;
+                }
             }
 
             // TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
@@ -515,7 +532,7 @@ void FileSaveAs(HWND windowHandle)
                 }
             }
             
-            int choice = MessageBox(windowHandle, TEXT("There is insufficient memory for opening this file or the file couldn't be created."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
+            int choice = MessageBox(windowHandle, TEXT("There was a problem with creating this file."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
 
             if (choice == IDCANCEL)
             {
@@ -552,13 +569,15 @@ void FileSaveAs(HWND windowHandle)
 void Undo(HWND windowHandle)
 {
     UndoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack));
-    UpdateUndoRedoState(windowHandle);
+    UpdateWindowTitle();
+    UpdateUndoRedoState();
 }
 
 void Redo(HWND windowHandle)
 {
     RedoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack));
-    UpdateUndoRedoState(windowHandle);
+    UpdateWindowTitle();
+    UpdateUndoRedoState();
 }
 
 void ApplyModificationFromInput(HWND windowHandle)
@@ -629,7 +648,8 @@ void ApplyModificationFromInput(HWND windowHandle)
 
     if (ApplyModification(fromFreqInt, toFreqInt, changeType, changeAmount, smoothing, currentChannel, fileEditor.channelsData, &(fileEditor.modificationStack)))
     {
-        UpdateUndoRedoState(windowHandle);
+        UpdateWindowTitle();
+        UpdateUndoRedoState();
     }
     else
     {
@@ -750,6 +770,10 @@ void PaintFileEditorPermanents()
     fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 595, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_UNDO, NULL, NULL);
     fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 675, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_REDO, NULL, NULL);
     CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)FILE_EDITOR_APPLY, NULL, NULL);
+
+    // Un-graying save and save as, as from now on they'll always be usable.
+    EnableMenuItem(GetMenu(mainWindowHandle), NOTIF_CODIFY(FILE_MENU_SAVE), MF_ENABLED);
+    EnableMenuItem(GetMenu(mainWindowHandle), NOTIF_CODIFY(FILE_MENU_SAVEAS), MF_ENABLED);
 }
 
 void PaintFileEditorTemporaries()
@@ -793,7 +817,7 @@ void CloseFileEditor()
     CloseWaveFile(fileEditor.fileInfo);
     fileEditor.fileInfo = NULL;
 
-    UpdateUndoRedoState(mainWindowHandle);
+    UpdateUndoRedoState();
 }
 
 void DeallocateChannelsData()
@@ -817,27 +841,36 @@ void UpdateWindowTitle()
 {
     if (fileEditor.fileInfo == NULL || IsFileNew(fileEditor.fileInfo))
     {
-        SetWindowText(mainWindowHandle, TEXT("Untitled") TITLE_POSTFIX);
+        // When there are unsaved changes, an * is appended to indicate it.
+        SetWindowText(mainWindowHandle, HasUnsavedChanges() ? TEXT("Untitled*") TITLE_POSTFIX : TEXT("Untitled") TITLE_POSTFIX);
     }
     else
     {
         // Extracting the file name from the full path, and appending " - Fourier".
         // I decided not to impose a length limit because I fear cutting a unicode string in the middle might ruin it. Worst comes to worst, users get a long ass string at the top of the screen.
-        unsigned int len = _tcslen(fileEditor.fileInfo->path);
-        TCHAR pathCopy[len + _tcslen(TITLE_POSTFIX) + 1]; // Allocating enough for the path name, the postfix, and the null terminator.
-        _tcscpy(pathCopy, fileEditor.fileInfo->path);
+        unsigned int pathLen = _tcslen(fileEditor.fileInfo->path);
+        unsigned int bufLen = pathLen + _tcslen(TITLE_POSTFIX) + 2; // Buffer must be large enough to hold the path name, an optional asterisk, the postfix, and the null terminator.
+        TCHAR pathCopy[bufLen];
+        _tcscpy_s(pathCopy, pathLen + 1, fileEditor.fileInfo->path);
         PathStripPath(pathCopy);
-        _tcscat(pathCopy, TITLE_POSTFIX);
+
+        // Appending an * to indicate unsaved changes.
+        if (HasUnsavedChanges())
+        {
+            _tcscat_s(pathCopy, pathLen + 2, TEXT("*"));
+        }
+
+        _tcscat_s(pathCopy, bufLen, TITLE_POSTFIX);
         SetWindowText(mainWindowHandle, pathCopy);
     }
 }
 
-void UpdateUndoRedoState(HWND windowHandle)
+void UpdateUndoRedoState()
 {
     char enableRedo = fileEditor.modificationStack != NULL && fileEditor.modificationStack->next != NULL;
     char enableUndo = fileEditor.modificationStack != NULL && fileEditor.modificationStack->prev != NULL;
 
-    HMENU menu = GetMenu(windowHandle);
+    HMENU menu = GetMenu(mainWindowHandle);
     EnableMenuItem(menu, NOTIF_CODIFY(EDIT_MENU_REDO), enableRedo ? MF_ENABLED : MF_GRAYED);
     EnableMenuItem(menu, NOTIF_CODIFY(EDIT_MENU_UNDO), enableUndo ? MF_ENABLED : MF_GRAYED);
 
@@ -1086,7 +1119,7 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units, char naturalsOnly)
 {
     // Calculating tick length given the interval length and how many ticks we want to have. Rounding it up instead of down because I would rather have too few ticks than too many.
-    div_t divResult = div(maxValue - minValue, NEW_FILE_TRACKBAR_TICKS);
+    div_t divResult = div(maxValue - minValue, TRACKBAR_TICKS);
     WPARAM tickLength = divResult.quot + (divResult.rem ? 1 : 0);
 
     // Adding trackbar.
@@ -1150,7 +1183,7 @@ void SyncTextboxToTrackbarFloat(HWND trackbar, HWND textbox)
     double val = (((double)SendMessage(trackbar, TBM_GETPOS, 0, 0)) - min) / (max - min); // It's assumed that we want to bring the number to the [0, 1] range.
 
     TCHAR buffer[16];
-    _stprintf(buffer, 16, TEXT("%.3f"), val);
+    _stprintf_s(buffer, 16, TEXT("%.3f"), val);
     SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
 }
 

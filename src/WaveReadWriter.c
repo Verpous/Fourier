@@ -60,8 +60,9 @@ void AllocateWaveFile(FileInfo** fileInfo, LPCTSTR path)
     // Creating copy of path string on heap for long term storage. +1 because of the null character.
     if (path != NULL)
     {
-        (*fileInfo)->path = malloc(sizeof(TCHAR) * (_tcslen(path) + 1));
-        _tcscpy((*fileInfo)->path, path);
+        size_t bufLen = _tcslen(path) + 1;
+        (*fileInfo)->path = malloc(sizeof(TCHAR) * bufLen);
+        _tcscpy_s((*fileInfo)->path, bufLen, path);
     }
 }
 
@@ -90,7 +91,7 @@ void CloseWaveFile(FileInfo* fileInfo)
 
 ReadWaveResult ReadWaveFile(FileInfo** fileInfo, LPCTSTR path)
 {
-    // Using _tfsopen rather than _tfopen so we can specify that we want exclusive write access.
+    // Using _tfsopen rather than _tfopen so we can specify that we want exclusive write access. _tfsopen doesn't have a secure version.
     FILE* file = _tfsopen(path, TEXT("r+b"), _SH_DENYWR);
 
     // This is the only error that we can return from immediately because after this point, we'll have an open file and memory allocation that will need to be cleared before we can exit.
@@ -830,8 +831,9 @@ char WriteWaveFileAs(FileInfo* fileInfo, LPCTSTR path, Function** channelsData)
     
     // Assigning values from the new file into fileInfo.
     fileInfo->file = newFile;
-    fileInfo->path = malloc(sizeof(TCHAR) * (_tcslen(path) + 1));
-    _tcscpy(fileInfo->path, path);
+    size_t bufLen = _tcslen(path) + 1;
+    fileInfo->path = malloc(sizeof(TCHAR) * bufLen);
+    _tcscpy_s(fileInfo->path, bufLen, path);
 
     return TRUE;
 }
@@ -933,7 +935,7 @@ unsigned short GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][CHANNEL_NAME_B
         // pos indicates what bit is currently on in the mask. If it's less than MAX_NAMED_CHANNELS, the mask must've found a set bit in the channel mask, which means this channel maps to that position.
         if (pos < MAX_NAMED_CHANNELS)
         {
-            _tcscpy(buffer[i], positions[pos]);
+            _tcscpy_s(buffer[i], CHANNEL_NAME_BUFFER_LEN, positions[pos]);
 
             // Moving the mask so we won't reuse this position.
             mask <<= 1;
@@ -942,8 +944,8 @@ unsigned short GetChannelNames(FileInfo* fileInfo, TCHAR buffer[][CHANNEL_NAME_B
         else // If we're here then there are more channels than set bits. In that case we will just number them.
         {
             // Important to use _tcscpy instead of simple assignment in here and all the other places, because the string buffer is already allocated, we want to write where it points to.
-            _tcscpy(buffer[i], chanNumPrefix);
-            _ultot(i + 1, buffer[i] + prefixLen, 10);
+            _tcscpy_s(buffer[i], CHANNEL_NAME_BUFFER_LEN, chanNumPrefix);
+            _ultot_s(i + 1, buffer[i] + prefixLen, CHANNEL_NAME_BUFFER_LEN - prefixLen, 10);
         }
     }
 

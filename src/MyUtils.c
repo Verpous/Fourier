@@ -17,6 +17,7 @@
 #include "MyUtilsInternal.h"
 #include <stdlib.h> // For memcpy, rand, etc.
 #include <limits.h> // For CHAR_BIT and max unsigned long long.
+#include <tchar.h>
 
 int RandRange(int min, int max)
 {
@@ -167,4 +168,10 @@ unsigned long long NextPowerOfTwo(unsigned long long N)
         unsigned int leadingZeroes = CountLeadingZeroes(N);
         return (1ULL << (sizeof(N) * CHAR_BIT - 1ULL)) >> (leadingZeroes - 1ULL);
     }
+}
+
+char FileExists(LPCTSTR path)
+{
+    WIN32_FIND_DATA data = {0};
+    return FindFirstFile(path, &data) != INVALID_HANDLE_VALUE;
 }
