@@ -120,6 +120,8 @@ void UpdateWindowTitle();
 // Grays and ungrays the undo and redo buttons according to the current program state.
 void UpdateUndoRedoState();
 
+// Returns nonzero iff the file editor is open, meaning a file has been created or opened at least once.
+char IsEditorOpen();
 
 
 // Handler for any messages sent to the new file options dialog.

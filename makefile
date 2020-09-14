@@ -10,25 +10,38 @@ LinkedLibs:=-lcomdlg32 -lksuser -lcomctl32 -lshlwapi
 
 .PHONY: all debug unicode ansi run runx runvscode clean
 
-# Default target is unicode
 all: unicode
 
-# Appending -g flag to CFLAGS so files will be compiled with debug information, then compiling for unicode.
+# Compiles and links everything with debug information that is useful to debuggers.
 debug: CFlags += -g
-debug: unicode
+debug: all
 
-# Appending UNICODE definition to CFLAGS so everything will use unicode, then compiling.
+# Compiles and links everything for unicode strings.
 unicode: CFlags += -D UNICODE -D _UNICODE
 unicode: bin/fourier
 
-# Compiling without defining UNICODE means we're targeting ANSI.
+# Compiles and links everything for ANSI strings.
 ansi: bin/fourier
 
-bin/fourier: bin/main.o bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o
-	$(CC) $(LFlags) bin/main.o bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o $(LinkedLibs) -o bin/fourier
+# Compiles and runs. Output streams are redirected to a log.
+run: unicode
+	bin/fourier >>errors.log 2>&1
 
-bin/main.o: src/main.c
-	$(CC) $(CFlags) -o bin/main.o src/main.c
+# "Run exclusively". Same as run, but won't try to compile it.
+runx:
+	bin/fourier >>errors.log 2>&1
+
+# Same as run but without the io redirection.
+runstdio: unicode
+	bin/fourier
+
+# Empties the bin folder.
+clean:
+	rm -f bin/*
+
+# The following targets do the actual job of compiling and linking all the different files. You'll probably never run them directly.
+bin/fourier: bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o bin/Resources.o
+	$(CC) $(LFlags) bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o bin/Resources.o $(LinkedLibs) -o bin/fourier
 
 bin/WindowsMain.o: src/WindowsMain.c
 	$(CC) $(CFlags) -o bin/WindowsMain.o src/WindowsMain.c
@@ -45,17 +58,5 @@ bin/MyUtils.o: src/MyUtils.c
 bin/SampledFunction.o: src/SampledFunction.c
 	$(CC) $(CFlags) -o bin/SampledFunction.o src/SampledFunction.c
 
-# Compiles and runs. Output streams are redirected to a log.
-run: unicode
-	bin/fourier >>errors.log 2>&1
-
-# "Run exclusively". Same as run, but won't try to compile it.
-runx:
-	bin/fourier >>errors.log 2>&1
-
-# Same as run but without the io redirection. Intended for use by the code runner extension in vscode so it can display output.
-runvscode: unicode
-	bin/fourier
-	
-clean:
-	rm -f bin/*
+bin/Resources.o: src/Resources.rc
+	windres -Iinclude src/Resources.rc bin/Resources.o

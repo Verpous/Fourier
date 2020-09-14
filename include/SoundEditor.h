@@ -24,11 +24,17 @@ typedef struct Modification
 // Applies a modification to the function in the given channel and stores the modification in the modifications stack. Returns zero iff there was a memory allocation error.
 char ApplyModification(unsigned long long, unsigned long long, ChangeType, double, double, unsigned short, Function**, Modification**);
 
-// Given the channel functions and modification stack, undoes the change at the top of the stack.
-void UndoLastModification(Function**, Modification**);
+// Given the channel functions and the modification stack, redoes the change that was last undone. Returns nonzero value iff there were changes to redo.
+char RedoLastModification(Function**, Modification**);
 
-// Given the channel functions and the modification stack, redoes the change that was last undone.
-void RedoLastModification(Function**, Modification**);
+// Given the channel functions and modification stack, undoes the change at the top of the stack. Returns nonzero value iff there were changes to undo.
+char UndoLastModification(Function**, Modification**);
+
+// Returns nonzero value iff there are changes that can be redone.
+char CanRedo(Modification*);
+
+// Returns nonzero value iff there are changes that can be undone.
+char CanUndo(Modification*);
 
 // Allocates and initializes a new modification stack.
 void InitializeModificationStack(Modification**);

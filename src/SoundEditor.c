@@ -173,39 +173,52 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
     }
 }
 
-void UndoLastModification(Function** channelsData, Modification** modificationStack)
+char RedoLastModification(Function** channelsData, Modification** modificationStack)
 {
     Modification* current = *modificationStack;
-    Modification* prev = current->prev;
 
-    if (prev == NULL)
-    {
-        fprintf(stderr, "Tried to undo even though there's nothing to undo.\n");
-        return;
-    }
+	if (CanRedo(current))
+	{
+		Modification* next = current->next;
 
-    // Restoring the backed up values back into the channel data.
-    CopySamples(channelsData[current->channel], current->oldFunc, current->startSample, 0, NumOfSamples(current->oldFunc));
+		// Applying the modification again.
+		ApplyModificationInternal(channelsData, next);
 
-    // Assigning the last modification as our current position on the stack.
-    *modificationStack = prev;
+		// Assigning this modification as our current position on the stack.
+		*modificationStack = next;
+		return TRUE;
+	}
+
+	return FALSE;
 }
 
-void RedoLastModification(Function** channelsData, Modification** modificationStack)
+char UndoLastModification(Function** channelsData, Modification** modificationStack)
 {
-    Modification* next = (*modificationStack)->next;
+    Modification* current = *modificationStack;
 
-    if (next == NULL)
-    {
-        fprintf(stderr, "Tried to redo even though there's nothing to redo.\n");
-        return;
-    }
+	if (CanUndo(current))
+	{
+		Modification* prev = current->prev;
 
-    // Applying the modification again.
-    ApplyModificationInternal(channelsData, next);
+		// Restoring the backed up values back into the channel data.
+		CopySamples(channelsData[current->channel], current->oldFunc, current->startSample, 0, NumOfSamples(current->oldFunc));
 
-    // Assigning this modification as our current position on the stack.
-    *modificationStack = next;
+		// Assigning the last modification as our current position on the stack.
+		*modificationStack = prev;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+char CanRedo(Modification* modificationStack)
+{
+	return modificationStack != NULL && modificationStack->next != NULL;
+}
+
+char CanUndo(Modification* modificationStack)
+{
+	return modificationStack != NULL && modificationStack->prev != NULL;
 }
 
 void InitializeModificationStack(Modification** modificationStack)

@@ -17,7 +17,7 @@
 #include "MyUtilsInternal.h"
 #include <stdlib.h> // For memcpy, rand, etc.
 #include <limits.h> // For CHAR_BIT and max unsigned long long.
-#include <tchar.h>
+#include <tchar.h> // For dealing with ansi and unicode strings.
 
 int RandRange(int min, int max)
 {
