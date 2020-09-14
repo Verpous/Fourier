@@ -7,33 +7,32 @@
 
 typedef struct NewFileOptionsWindow
 {
-    HWND handle;
-    HWND parent;
-    HWND lengthTrackbar;
-    HWND lengthTextbox;
-    HWND frequencyTrackbar;
-    HWND frequencyTextbox;
-    HWND depthOptions[4];
+	HWND handle;
+	HWND parent;
+	HWND lengthTrackbar;
+	HWND lengthTextbox;
+	HWND frequencyTrackbar;
+	HWND frequencyTextbox;
+	HWND depthOptions[4];
 } NewFileOptionsWindow;
 
 typedef struct FileEditor
-{   
-    FileInfo* fileInfo;
-    Function** channelsData; // An array of function pointers. This can be either the waveform or the DFT, we swap between them.
-    Modification* modificationStack; // A stack of all the changes the user applies, for undoing and redoing them.
-    Modification* currentSaveState; // The last change that was saved.
+{
+	FileInfo* fileInfo;
+	Function** channelsData;		 // An array of function pointers. This can be either the waveform or the DFT, we swap between them.
+	Modification* modificationStack; // A stack of all the changes the user applies, for undoing and redoing them.
+	Modification* currentSaveState;	 // The last change that was saved.
 
-    HWND channelTabs;
-    HWND fromFreqTextbox;
-    HWND toFreqTextbox;
-    HWND changeTypeDropdown;
-    HWND changeAmountTextbox;
-    HWND smoothingTrackbar;
-    HWND smoothingTextbox;
-    HWND undoButton;
-    HWND redoButton;
+	HWND channelTabs;
+	HWND fromFreqTextbox;
+	HWND toFreqTextbox;
+	HWND changeTypeDropdown;
+	HWND changeAmountTextbox;
+	HWND smoothingTrackbar;
+	HWND smoothingTextbox;
+	HWND undoButton;
+	HWND redoButton;
 } FileEditor;
-
 
 // Registers classes and creates the main window.
 char InitializeWindows(HINSTANCE);
@@ -49,7 +48,6 @@ char RegisterNewFileOptionsClass(HINSTANCE);
 
 // Registers the class for the window that pops up when the program starts that asks you to choose between new file and open file.
 char RegisterSelectFileOptionClass(HINSTANCE);
-
 
 // Handler for any messages sent to our main window.
 LRESULT CALLBACK MainWindowProcedure(HWND, UINT, WPARAM, LPARAM);
@@ -123,7 +121,6 @@ void UpdateUndoRedoState();
 // Returns nonzero iff the file editor is open, meaning a file has been created or opened at least once.
 char IsEditorOpen();
 
-
 // Handler for any messages sent to the new file options dialog.
 LRESULT CALLBACK NewFileOptionsProcedure(HWND, UINT, WPARAM, LPARAM);
 
@@ -142,7 +139,6 @@ void ApplyNewFileOptions(HWND);
 // Processes any WM_COMMAND message the new file window may receive.
 void ProcessNewFileOptionsCommand(HWND, WPARAM, LPARAM);
 
-
 // Handler for any messages sent to the new file options dialog.
 LRESULT CALLBACK SelectFileOptionProcedure(HWND, UINT, WPARAM, LPARAM);
 
@@ -154,7 +150,6 @@ void CloseSelectFileOption(HWND);
 
 // Processes any WM_COMMAND message sent to the select file option window.
 void ProcessSelectFileOptionCommand(HWND, WPARAM, LPARAM);
-
 
 // Paints a trackbar-textbox-units triple with the given parameters.
 void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, int, LPCTSTR, LPCTSTR, char);

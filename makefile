@@ -58,5 +58,5 @@ bin/MyUtils.o: src/MyUtils.c
 bin/SampledFunction.o: src/SampledFunction.c
 	$(CC) $(CFlags) -o bin/SampledFunction.o src/SampledFunction.c
 
-bin/Resources.o: src/Resources.rc
-	windres -Iinclude src/Resources.rc bin/Resources.o
+bin/Resources.o: resources/Resources.rc
+	windres -Iinclude -o bin/Resources.o resources/Resources.rc

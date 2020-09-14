@@ -29,7 +29,7 @@
 #define ACCELERATOR_SHORTCUT_PRESSED 1
 
 // This needs to be above 0x8000 and different than the values in Resources.h.
-#define FILE_MENU_EXIT 0x8008
+#define PROGRAM_EXIT 0x8008
 
 // These don't need to be above 0x8000.
 #define NEW_FILE_OPTIONS_OK 1
@@ -38,7 +38,7 @@
 // File length is measured in seconds.
 #define FILE_MIN_LENGTH 1
 #define FILE_MAX_LENGTH 3600
-#define NEW_FILE_DEFAULT_LENGTH 60
+#define NEW_FILE_DEFAULT_LENGTH 10 // TODO: change this something like 30 or 60 when the program is finished.
 #define LENGTH_TRACKBAR_LINESIZE 1
 #define LENGTH_TRACKBAR_PAGESIZE 60
 
@@ -68,7 +68,7 @@
 #define TITLE_POSTFIX TEXT(" - Fourier")
 
 static HWND mainWindowHandle = NULL;
-static NewFileOptionsWindow *newFileOptionsHandles = NULL;
+static NewFileOptionsWindow* newFileOptionsHandles = NULL;
 static FileEditor fileEditor = {0};
 
 #pragma region Initialization
@@ -196,7 +196,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 			return 0;
 		case 0x6969:
 			PopSelectFileOptionDialog(windowHandle);
-			break;
+			return 0;
 		case WM_COMMAND:
 			ProcessMainWindowCommand(windowHandle, wparam, lparam);
 			return 0;
@@ -238,17 +238,17 @@ void AddMainWindowMenus(HWND windowHandle)
 	HMENU editMenuHandler = CreateMenu();
 
 	// Appending file menu options.
-	AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_NEW), TEXT("New\tCtrl+N"));
-	AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_OPEN), TEXT("Open\tCtrl+O"));
-	AppendMenu(fileMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(FILE_SAVE), TEXT("Save\tCtrl+S"));
-	AppendMenu(fileMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(FILE_SAVEAS), TEXT("Save as\tCtrl+Shift+S"));
+	AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_ACTION_NEW), TEXT("New\tCtrl+N"));
+	AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_ACTION_OPEN), TEXT("Open\tCtrl+O"));
+	AppendMenu(fileMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(FILE_ACTION_SAVE), TEXT("Save\tCtrl+S"));
+	AppendMenu(fileMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(FILE_ACTION_SAVEAS), TEXT("Save as\tCtrl+Shift+S"));
 	AppendMenu(fileMenuHandler, MF_SEPARATOR, 0, NULL); // Separator between exit and all the other options.
-	AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(FILE_MENU_EXIT), TEXT("Exit"));
+	AppendMenu(fileMenuHandler, MF_STRING, NOTIF_CODIFY(PROGRAM_EXIT), TEXT("Exit"));
 
 	// Appending edit menu options. Initially, undo and redo are grayed out.
-	AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_UNDO), TEXT("Undo\tCtrl+Z"));
-	AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_REDO), TEXT("Redo\tCtrl+Y"));
-	AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_APPLY), TEXT("Apply\tCtrl+E"));
+	AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_ACTION_UNDO), TEXT("Undo\tCtrl+Z"));
+	AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_ACTION_REDO), TEXT("Redo\tCtrl+Y"));
+	AppendMenu(editMenuHandler, MF_STRING | MF_GRAYED, NOTIF_CODIFY(EDIT_ACTION_APPLY), TEXT("Apply\tCtrl+E"));
 
 	// Adding both menus.
 	AppendMenu(menuHandler, MF_POPUP, (UINT_PTR)fileMenuHandler, TEXT("File"));
@@ -259,7 +259,7 @@ void AddMainWindowMenus(HWND windowHandle)
 
 void PopSelectFileOptionDialog(HWND windowHandle)
 {
-	HWND popupHandle = CreateWindow(WC_SELECTFILEOPTION, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU, 700, 450, 330, 120, windowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_SELECTFILEOPTION, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU, 700, 450, 330, 120, windowHandle, NULL, NULL, NULL);
 	EnableWindow(windowHandle, FALSE);
 }
 
@@ -272,9 +272,9 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 			// The buttons use the same identifiers as their corresponding menu options so we can forward this to be handled as a menu item press.
 			switch (LOWORD(wparam))
 			{
-				case EDIT_REDO:
-				case EDIT_UNDO:
-				case EDIT_APPLY:
+				case EDIT_ACTION_REDO:
+				case EDIT_ACTION_UNDO:
+				case EDIT_ACTION_APPLY:
 					ProcessMainWindowCommand(windowHandle, NOTIF_CODIFY(LOWORD(wparam)), lparam);
 					break;
 			}
@@ -302,29 +302,29 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 			}
 
 			break;
-		case FILE_NEW:
+		case FILE_ACTION_NEW:
 			FileNew(windowHandle);
 			break;
-		case FILE_OPEN:
+		case FILE_ACTION_OPEN:
 			FileOpen(windowHandle);
 			break;
-		case FILE_SAVE:
+		case FILE_ACTION_SAVE:
 			FileSave(windowHandle);
 			break;
-		case FILE_SAVEAS:
+		case FILE_ACTION_SAVEAS:
 			FileSaveAs(windowHandle);
 			break;
-		case FILE_MENU_EXIT:
-			DestroyWindow(windowHandle);
-			break;
-		case EDIT_REDO:
+		case EDIT_ACTION_REDO:
 			Redo(windowHandle);
 			break;
-		case EDIT_UNDO:
+		case EDIT_ACTION_UNDO:
 			Undo(windowHandle);
 			break;
-		case EDIT_APPLY:
+		case EDIT_ACTION_APPLY:
 			ApplyModificationFromInput(windowHandle);
+			break;
+		case PROGRAM_EXIT:
+			DestroyWindow(windowHandle);
 			break;
 		default:
 			break;
@@ -368,7 +368,7 @@ void FileOpen(HWND windowHandle)
 
 	if (GetOpenFileName(&ofn))
 	{
-		FileInfo *fileInfo;
+		FileInfo* fileInfo;
 		ReadWaveResult result = ReadWaveFile(&fileInfo, filename);
 
 		if (!ResultHasError(result))
@@ -629,7 +629,7 @@ void ApplyModificationFromInput(HWND windowHandle)
 	}
 	
 	TCHAR buffer[16];
-	TCHAR *endChar;
+	TCHAR* endChar;
 
 	// First reading the from frequency.
 	LRESULT length = SendMessage(fileEditor.fromFreqTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
@@ -729,7 +729,7 @@ char PromptSaveProgress(HWND windowHandle)
 	return TRUE;
 }
 
-void InitializeFileEditor(HWND windowHandle, FileInfo *fileInfo)
+void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 {
 	// Closing the file that was open until now.
 	CloseFileEditor();
@@ -812,15 +812,15 @@ void PaintFileEditorPermanents()
 
 	// Adding buttons for ok and cancel.
 	// TODO: I'm considering moving these buttons to the center of the screen (horizontally).
-	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 595, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_UNDO, NULL, NULL);
-	fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 675, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_REDO, NULL, NULL);
-	CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_APPLY, NULL, NULL);
+	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 595, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_ACTION_UNDO, NULL, NULL);
+	fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 675, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_ACTION_REDO, NULL, NULL);
+	CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_ACTION_APPLY, NULL, NULL);
 
 	// Un-graying menu options that will always be usable from now on.
 	HMENU mainMenu = GetMenu(mainWindowHandle);
-	EnableMenuItem(mainMenu, NOTIF_CODIFY(FILE_SAVE), MF_BYCOMMAND | MF_ENABLED);
-	EnableMenuItem(mainMenu, NOTIF_CODIFY(FILE_SAVEAS), MF_BYCOMMAND | MF_ENABLED);
-	EnableMenuItem(mainMenu, NOTIF_CODIFY(EDIT_APPLY), MF_BYCOMMAND | MF_ENABLED);
+	EnableMenuItem(mainMenu, NOTIF_CODIFY(FILE_ACTION_SAVE), MF_BYCOMMAND | MF_ENABLED);
+	EnableMenuItem(mainMenu, NOTIF_CODIFY(FILE_ACTION_SAVEAS), MF_BYCOMMAND | MF_ENABLED);
+	EnableMenuItem(mainMenu, NOTIF_CODIFY(EDIT_ACTION_APPLY), MF_BYCOMMAND | MF_ENABLED);
 }
 
 void PaintFileEditorTemporaries()
@@ -918,8 +918,8 @@ void UpdateUndoRedoState()
 	char enableUndo = CanUndo(fileEditor.modificationStack);
 
 	HMENU menu = GetMenu(mainWindowHandle);
-	EnableMenuItem(menu, NOTIF_CODIFY(EDIT_REDO), enableRedo ? MF_ENABLED : MF_GRAYED);
-	EnableMenuItem(menu, NOTIF_CODIFY(EDIT_UNDO), enableUndo ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(menu, NOTIF_CODIFY(EDIT_ACTION_REDO), enableRedo ? MF_ENABLED : MF_GRAYED);
+	EnableMenuItem(menu, NOTIF_CODIFY(EDIT_ACTION_UNDO), enableUndo ? MF_ENABLED : MF_GRAYED);
 
 	if (IsEditorOpen())
 	{
@@ -1038,7 +1038,7 @@ void ApplyNewFileOptions(HWND windowHandle)
 	{
 		// Storing this because the pointer to it will be deallocated by CloseNewFileOptions.
 		HWND parent = newFileOptionsHandles->parent;
-		FileInfo *fileInfo;
+		FileInfo* fileInfo;
 
 		// Proceeding with creating a new file only if the user didn't choose to abort.
 		CreateNewFile(&fileInfo, length, frequency, byteDepth);
@@ -1121,8 +1121,8 @@ void PaintSelectFileOptionWindow(HWND windowHandle)
 	CreateWindow(WC_STATIC, TEXT("Create a new file or open an existing one?"), WS_VISIBLE | WS_CHILD | SS_CENTER, 0, 15, 330, 30, windowHandle, NULL, NULL, NULL);
 
 	// Adding buttons for new file and open file.
-	CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 85, 50, 70, 35, windowHandle, (HMENU)FILE_NEW, NULL, NULL);
-	CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 175, 50, 70, 35, windowHandle, (HMENU)FILE_OPEN, NULL, NULL);
+	CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 85, 50, 70, 35, windowHandle, (HMENU)FILE_ACTION_NEW, NULL, NULL);
+	CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 175, 50, 70, 35, windowHandle, (HMENU)FILE_ACTION_OPEN, NULL, NULL);
 }
 
 void CloseSelectFileOption(HWND windowHandle)
@@ -1141,10 +1141,10 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 		case BN_CLICKED:
 			switch (LOWORD(wparam))
 			{
-				case FILE_NEW:
+				case FILE_ACTION_NEW:
 					FileNew(windowHandle);
 					break;
-				case FILE_OPEN:
+				case FILE_ACTION_OPEN:
 					FileOpen(windowHandle);
 
 					// If the FileOpen operation was a success, closing this menu.
@@ -1168,7 +1168,7 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 
 #pragma region Misc
 
-void AddTrackbarWithTextbox(HWND windowHandle, HWND *trackbar, HWND *textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units, char naturalsOnly)
+void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units, char naturalsOnly)
 {
 	// Calculating tick length given the interval length and how many ticks we want to have. Rounding it up instead of down because I would rather have too few ticks than too many.
 	div_t divResult = div(maxValue - minValue, TRACKBAR_TICKS);
@@ -1214,7 +1214,7 @@ void SyncTextboxToTrackbar(HWND trackbar, HWND textbox)
 void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
 {
 	TCHAR buffer[16];
-	TCHAR *endChar;
+	TCHAR* endChar;
 	LRESULT length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
 	long val = _tcstol(buffer, &endChar, 10);
 
@@ -1242,7 +1242,7 @@ void SyncTextboxToTrackbarFloat(HWND trackbar, HWND textbox)
 void SyncTrackbarToTextboxFloat(HWND trackbar, HWND textbox)
 {
 	TCHAR buffer[16];
-	TCHAR *endChar;
+	TCHAR* endChar;
 	LRESULT length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
 	double val = _tcstod(buffer, &endChar);
 

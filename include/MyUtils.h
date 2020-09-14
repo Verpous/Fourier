@@ -46,7 +46,7 @@ void QuickSort(void*, int, int, char (*)(void*, void*), size_t);
 
 // Takes a number and returns nonzero value iff it's a power of two.
 char IsPowerOfTwo(unsigned long long);
-  
+
 // Counts how many least significant zero-bits there are before the first set bit.
 unsigned int CountTrailingZeroes(unsigned long long);
 

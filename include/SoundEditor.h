@@ -5,20 +5,20 @@
 
 typedef enum
 {
-    MULTIPLY,
-    ADD,
+	MULTIPLY,
+	ADD,
 } ChangeType;
 
 typedef struct Modification
 {
-    Function* oldFunc; /* The values that were in place before the modification. We only store samples that were changed.*/
-    unsigned long long startSample; /* The sample from which the modification was applied.*/
-    ChangeType changeType; /* Whether the modification was additive or multiplicative.*/
-    double changeAmount; /* How much was changed.*/
-    double smoothing; /* How smoothed the change was. 0 for totally square, 1 for totally curved.*/
-    unsigned short channel; /* The channel that the change was applied to.*/
-    struct Modification* prev; /* The modification before this one.*/
-    struct Modification* next; /* The modification after this one.*/
+	Function* oldFunc;				// The values that were in place before the modification. We only store samples that were changed.
+	unsigned long long startSample; // The sample from which the modification was applied.
+	ChangeType changeType;			// Whether the modification was additive or multiplicative.
+	double changeAmount;			// How much was changed.
+	double smoothing;				// How smoothed the change was. 0 for totally square, 1 for totally curved.
+	unsigned short channel;			// The channel that the change was applied to.
+	struct Modification* prev;		// The modification before this one.
+	struct Modification* next;		// The modification after this one.
 } Modification;
 
 // Applies a modification to the function in the given channel and stores the modification in the modifications stack. Returns zero iff there was a memory allocation error.

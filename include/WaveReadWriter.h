@@ -4,8 +4,8 @@
 #include "MyUtils.h"
 #include "SampledFunction.h"
 #include <windows.h> // For various winapi features.
-#include <mmreg.h> // For various WAVE-related things.
-#include <stdio.h> // For dealing with files.
+#include <mmreg.h>	 // For various WAVE-related things.
+#include <stdio.h>	 // For dealing with files.
 
 // Byte-depths we support. Notice it's in bytes and not bits. This program only supports bit-depths which are multiples of 8.
 #define FILE_MIN_DEPTH 1
@@ -23,65 +23,65 @@
 // How this enum works: Results are numbered as usual, but the MSB is OR'd in when you want to differentiate between success without warning and with.
 typedef enum
 {
-    // Success is 0 so you can OR it with anything.
-    FILE_READ_SUCCESS   = 0x00000000, 
-    
-    // The lower 16 bits are used for errors.
-    FILE_CANT_OPEN      = 0x00000001,
-    FILE_NOT_WAVE       = 0x00000002,
-    FILE_BAD_WAVE       = 0x00000004,
-    FILE_BAD_FORMAT     = 0x00000008,
-    FILE_BAD_BITDEPTH   = 0x00000010,
-    FILE_BAD_FREQUENCY  = 0x00000020,
-    FILE_BAD_SIZE       = 0x00000040,
-    FILE_BAD_SAMPLES    = 0x00000080,
-    FILE_MISC_ERROR     = 0x00008000,
+	// Success is 0 so you can OR it with anything.
+	FILE_READ_SUCCESS = 0x00000000,
 
-    // The higher 16 bits are used for warnings.
-    FILE_CHUNK_WARNING  = 0x80000000,
-    FILE_CHAN_WARNING   = 0x40000000,
+	// The lower 16 bits are used for errors.
+	FILE_CANT_OPEN = 0x00000001,
+	FILE_NOT_WAVE = 0x00000002,
+	FILE_BAD_WAVE = 0x00000004,
+	FILE_BAD_FORMAT = 0x00000008,
+	FILE_BAD_BITDEPTH = 0x00000010,
+	FILE_BAD_FREQUENCY = 0x00000020,
+	FILE_BAD_SIZE = 0x00000040,
+	FILE_BAD_SAMPLES = 0x00000080,
+	FILE_MISC_ERROR = 0x00008000,
+
+	// The higher 16 bits are used for warnings.
+	FILE_CHUNK_WARNING = 0x80000000,
+	FILE_CHAN_WARNING = 0x40000000,
 } ReadWaveResult;
 
 typedef struct ChunkHeader
 {
-    FOURCC id;
-    DWORD size;
+	FOURCC id;
+	DWORD size;
 } ChunkHeader;
 
 typedef struct WaveHeader
 {
-    ChunkHeader chunkHeader;
-    FOURCC id;
+	ChunkHeader chunkHeader;
+	FOURCC id;
 } WaveHeader;
 
 typedef struct FormatChunk
 {
-    ChunkHeader header;
-    WAVEFORMATEXTENSIBLE contents;
+	ChunkHeader header;
+	WAVEFORMATEXTENSIBLE contents;
 } FormatChunk;
 
 typedef struct WaveformSegment
 {
-    ChunkHeader header;
-    DWORD relativeOffset; // The offset that the header begins in relative to the offset in the WaveformChunk this belongs to.
+	ChunkHeader header;
+	DWORD relativeOffset; // The offset that the header begins in relative to the offset in the WaveformChunk this belongs to.
 } WaveformSegment;
 
 typedef struct WaveformChunk
 {
-    char isList;
-    DWORD offset; // For lists, this should point to the byte after the 'wavl' FOURCC. For non-lists, this points to the first byte in the chunk header of the data chunk.
-    DWORD segmentsLength;
-    WaveformSegment* segments;
+	char isList;
+	DWORD offset; // For lists, this should point to the byte after the 'wavl' FOURCC. For non-lists, this points to the first byte in the chunk header of the data chunk.
+	DWORD segmentsLength;
+	WaveformSegment* segments;
 } WaveformChunk;
 
 typedef struct FileInfo
 {
-    FILE* file;
-    LPTSTR path;
-    WaveHeader header;
-    FormatChunk format; 
-    WaveformChunk waveform;
-    DWORD sampleLength;
+	FILE* file;
+	LPTSTR path;
+	WaveHeader header;
+	FormatChunk format;
+	WaveformChunk waveform;
+	DWORD sampleLength;
 } FileInfo;
 
 // Closes the given file, and deallocates it.
