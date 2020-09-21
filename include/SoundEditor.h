@@ -39,10 +39,12 @@ char CanUndo(Modification*);
 // Allocates and initializes a new modification stack.
 void InitializeModificationStack(Modification**);
 
-// Deallocates the given modification stack.
-void DeallocateModificationStack(Modification**);
+// Deallocates memory associated with the given modification stack.
+void DeallocateModificationStack(Modification*);
 
-// Applies an FFT to the function assuming that it's a real function in complex interleaved form.
+// Applies an FFT to the function assuming that it's a real function in complex interleaved form, as described in this document:
+// https://www.ti.com/lit/an/spra291/spra291.pdf?ts=1597858546752&ref_url=https%253A%252F%252Fwww.google.co.il%252F.
+// Basically, f is treated as if it's a complex sequence where the real parts correspond to even indices of a real sequence g, and the imaginary parts correspond to odds.
 void RealInterleavedFFT(Function*);
 
 // Applies an IFFT to the function assuming it's a real function in complex interleaved form.

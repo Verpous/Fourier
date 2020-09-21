@@ -49,6 +49,17 @@ double ClampDouble(double val, double min, double max)
 	return val > max ? max : val < min ? min : val;
 }
 
+long long ClampInt(long long val, long long min, long long max)
+{
+	return val > max ? max : val < min ? min : val;
+}
+
+long long DivCeilInt(long long numerator, long long denominator)
+{
+	lldiv_t divResult = lldiv(numerator, denominator);
+	return divResult.quot + (divResult.rem == 0 ? 0 : 1);
+}
+
 void Swap(void* a, void* b, size_t size)
 {
 	char temp[size];
@@ -57,7 +68,7 @@ void Swap(void* a, void* b, size_t size)
 	memcpy(b, temp, size);
 }
 
-void Bubblesort(void* arr, int length, char (*comparator)(void* , void*), size_t size)
+void Bubblesort(void* arr, int length, char (*comparator)(void*, void*), size_t size)
 {
 	int i, j;
 
@@ -79,7 +90,7 @@ void Bubblesort(void* arr, int length, char (*comparator)(void* , void*), size_t
 	}
 }
 
-void Quicksort(void* arr, int low, int high, char (*comparator)(void* , void*), size_t size)
+void Quicksort(void* arr, int low, int high, char (*comparator)(void*, void*), size_t size)
 {
 	if (low < high)
 	{
@@ -92,7 +103,7 @@ void Quicksort(void* arr, int low, int high, char (*comparator)(void* , void*), 
 	}
 }
 
-int Partition(void* arr, int low, int high, char (*comparator)(void* , void*), size_t size)
+int Partition(void* arr, int low, int high, char (*comparator)(void*, void*), size_t size)
 {
 	int rand = RandRange(low, high + 1);
 	void *pivot = arr + (high * size);

@@ -24,24 +24,6 @@
 #include <limits.h>	 // For CHAR_BIT.
 #include <stdio.h>	 // For fprintf.
 
-#define cexp_DoubleComplex(x) cexp(x)
-#define cexp_FloatComplex(x) cexpf(x)
-
-#define conj_DoubleComplex(x) conj(x)
-#define conj_FloatComplex(x) conjf(x)
-
-#define carg_DoubleComplex(x) carg(x)
-#define carg_FloatComplex(x) cargf(x)
-
-#define cabs_DoubleComplex(x) cabs(x)
-#define cabs_FloatComplex(x) cabsf(x)
-
-#define cos_DoubleReal(x) cos(x)
-#define cos_FloatReal(x) cosf(x)
-
-#define ceil_DoubleReal(x) ceil(x)
-#define ceil_FloatReal(x) ceilf(x)
-
 #define RootOfUnity_DoubleComplex(k, N) cexp_DoubleComplex((CAST(-2.0 * M_PI, DoubleComplex) * I * (k)) / (N))
 #define RootOfUnity_FloatComplex(k, N) cexp_FloatComplex((CAST(-2.0 * M_PI, FloatComplex) * I * (k)) / (N))
 
@@ -227,13 +209,12 @@ void InitializeModificationStack(Modification** modificationStack)
 	*modificationStack = calloc(1, sizeof(Modification));
 }
 
-void DeallocateModificationStack(Modification** modificationStack)
+void DeallocateModificationStack(Modification* modificationStack)
 {
-	if (*modificationStack != NULL)
+	if (modificationStack != NULL)
 	{
-		DeallocateModificationsNextwards((*modificationStack)->next);
-		DeallocateModificationsPrevwards(*modificationStack);
-		*modificationStack = NULL;
+		DeallocateModificationsNextwards(modificationStack->next);
+		DeallocateModificationsPrevwards(modificationStack);
 	}
 }
 

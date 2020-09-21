@@ -47,12 +47,6 @@
 // A mask where the only set bits are the ones that unavailable in an int with the given byte depth.
 #define SIGN_EXTEND_MASK(depth) (depth == 1 ? 0xFFFFFF00 : depth == 2 ? 0xFFFF0000 : depth == 3 ? 0xFF000000 : 0)
 
-#define abs_Float(f) fabsf(f)
-#define abs_Double(f) fabs(f)
-
-#define lround_Float(f) lroundf(f)
-#define lround_Double(f) lround(f)
-
 void AllocateWaveFile(FileInfo** fileInfo, LPCTSTR path)
 {
 	*fileInfo = calloc(1, sizeof(FileInfo));
@@ -732,7 +726,7 @@ char WriteWaveFile(FILE* file, FileInfo* fileInfo, Function** channelsData)
 						sample = Clamp##precision(sample, DEPTH_MIN(depth), DEPTH_MAX(depth));																					\
 																																												\
 						/* Rounding the sample to the nearest integer value.*/																									\
-						int quantized = lround_##precision(sample);																												\
+						int quantized = lround_##precision##Real(sample);																										\
 																																												\
 						/* Converting 8-bit files to unsigned.*/																												\
 						if (depth == 1)																																			\

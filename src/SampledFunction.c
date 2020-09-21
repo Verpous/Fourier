@@ -29,7 +29,7 @@ char AllocateFunctionInternals_##type(Function_##type* f, unsigned long long len
 	/* Choosing the segment length and count such that we can hold at least 'length' many samples.*/														\
 	f->totalLen = length;																																	\
 	f->segmentLen = min(length, MAX_SEGMENT_LEN);																											\
-	f->segmentCount = (length / f->segmentLen) + (length % f->segmentLen == 0 ? 0 : 1);																		\
+	f->segmentCount = DivCeilInt(length, f->segmentLen);																									\
 																																							\
 	if ((f->samples = calloc(f->segmentCount, sizeof(type*))) == NULL)																						\
 	{																																						\

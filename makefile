@@ -1,5 +1,5 @@
 CC:=gcc # C Compiler
-CFlags=-Wall -Wno-unknown-pragmas -c -Iinclude -O3 # C Compiler Flags. -Wno-unknown-pragmas gets rid of warnings about regions in the code. -O3 makes gcc optimize hard.
+CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -O3 # C Compiler Flags. -Wno-unknown-pragmas gets rid of warnings about regions in the code. -O3 makes gcc optimize hard.
 LFlags:=-Wall -mwindows # Linker Flags. -mwindows means that when you run the program it doesn't open cmd.
 
 # comdlg32 makes open/save file dialogs work.

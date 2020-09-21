@@ -17,10 +17,12 @@
 #include "WindowsMain.h"
 #include "MyUtils.h"
 #include "Resource.h"
-#include <stdio.h>	  // For printing errors and such.
-#include <commctrl.h> // For some trackbar-related things.
-#include <tchar.h>	  // For dealing with unicode and ANSI strings.
-#include <shlwapi.h>  // For PathStipPath.
+#include <stdio.h>		// For printing errors and such.
+#include <commctrl.h>	// For some trackbar-related things.
+#include <tchar.h>		// For dealing with unicode and ANSI strings.
+#include <shlwapi.h> 	// For PathStipPath.
+#include <gdiplus.h>	// For drawing graphs.
+#include <time.h>		// To seed rand.
 
 // Takes a notification code and returns it as an HMENU that uses the high word so it works the same as system notification codes.
 #define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
@@ -30,6 +32,9 @@
 
 // This needs to be above 0x8000 and different than the values in Resources.h.
 #define PROGRAM_EXIT 0x8008
+
+// This message tells the main window to pop the select file option dialog.
+#define WM_SELECTFILE WM_USER
 
 // These don't need to be above 0x8000.
 #define NEW_FILE_OPTIONS_OK 1
@@ -59,6 +64,10 @@
 // How many ticks we want to have in a trackbar.
 #define TRACKBAR_TICKS 11
 
+// Graphing constants. Sizes are in pixels.
+#define GRAPH_WIDTH 750
+#define GRAPH_HEIGHT 140 // This should be an even number because we divide it by 2.
+
 // WindowClass names.
 #define WC_MAINWINDOW TEXT("MainWindow")
 #define WC_NEWFILEOPTIONS TEXT("NewFileOptions")
@@ -76,6 +85,7 @@ static FileEditor fileEditor = {0};
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
 	fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
+	srand(time(NULL)); // Seeding the RNG. We use it for dithering.
 
 	if (!InitializeWindows(hInstance))
 	{
@@ -191,10 +201,9 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 	{
 		case WM_CREATE:
 			PaintMainWindow(windowHandle);
-			PopSelectFileOptionDialog(windowHandle);
-			//PostMessage(windowHandle, 0x6969, 0, 0);
+			PostMessage(windowHandle, WM_SELECTFILE, 0, 0); // This is a hack to resolve a bug that I couldn't make the modal dialog take focus when the main window was just created, so I post a message that does it with a delay.
 			return 0;
-		case 0x6969:
+		case WM_SELECTFILE:
 			PopSelectFileOptionDialog(windowHandle);
 			return 0;
 		case WM_COMMAND:
@@ -208,12 +217,34 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 			}
 
 			return 0;
+		case WM_NOTIFY:
+			if (((LPNMHDR)lparam)->code == TCN_SELCHANGE)
+			{
+				unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
+
+				// If the waveform of this channel hasn't been painted yet, then neither has the fourier transform. If it has been painted, then so has the fourier transform.
+				if (fileEditor.waveformGraphs[currentChannel] == NULL)
+				{
+					PlotChannelGraphs(currentChannel);
+				}
+				
+				DisplayChannelGraphs(currentChannel);
+			}
+
+			return 0;
 		case WM_CLOSE:
 			// Prompt the user to save his progress before it is lost.
 			if (PromptSaveProgress(windowHandle))
 			{
 				// Only proceeding if the user didn't choose to abort.
 				CloseFileEditor();
+
+				// This aspect of the file editor is only allocated once on the first file open which means it only needs to be deleted once, here.
+				if (fileEditor.graphingDC != NULL)
+				{
+					DeleteDC(fileEditor.graphingDC);
+				}
+
 				DestroyWindow(windowHandle);
 			}
 
@@ -450,7 +481,7 @@ void FileOpen(HWND windowHandle)
 
 		if (error == FNERR_BUFFERTOOSMALL)
 		{
-			MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH)) TEXT(" characters"), NULL, MB_OK | MB_ICONERROR);
+			MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TXStringify(MAX_PATH) TEXT(" characters"), NULL, MB_OK | MB_ICONERROR);
 		}
 	}
 }
@@ -467,37 +498,39 @@ void FileSave(HWND windowHandle)
 	{
 		FileSaveAs(windowHandle);
 	}
-	else if (HasUnsavedChanges()) // TODO: make the code inside here loop until a success or the user decides to accept the failure.
+	else if (HasUnsavedChanges())
 	{
-		// TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
-		WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+		SetAllChannelsDomain(TIME_DOMAIN);
 
-		for (WORD i = 0; i < relevantChannels; i++)
+		while (TRUE)
 		{
-			InverseRealInterleavedFFT(fileEditor.channelsData[i]);
-		}
+			if (WriteWaveFile(fileEditor.fileInfo->file, fileEditor.fileInfo, fileEditor.channelsData))
+			{
+				fileEditor.currentSaveState = fileEditor.modificationStack;
+				UpdateWindowTitle();
+				break;
+			}
+			else
+			{
+				int choice = MessageBox(windowHandle, TEXT("There is insufficient memory for saving this file."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
 
-		if (WriteWaveFile(fileEditor.fileInfo->file, fileEditor.fileInfo, fileEditor.channelsData))
-		{
-			fileEditor.currentSaveState = fileEditor.modificationStack;
-		}
-		else
-		{
-			MessageBox(windowHandle, TEXT("There is insufficient memory for saving this file."), NULL, MB_ICONERROR | MB_OK);
-		}
-
-		// TODO: this part is here temporarily. In the future when we draw graphs, we'll want to re-FFT only channels we need (?).
-		for (WORD i = 0; i < relevantChannels; i++)
-		{
-			RealInterleavedFFT(fileEditor.channelsData[i]);
+				if (choice == IDCANCEL)
+				{
+					break;
+				}
+			}
 		}
 	}
-
-	UpdateWindowTitle();
 }
 
 void FileSaveAs(HWND windowHandle)
 {
+	// If the file editor isn't open yet, no file has been opened for saving.
+	if (!IsEditorOpen())
+	{
+		return;
+	}
+
 	OPENFILENAME ofn = {0};
 	TCHAR filename[MAX_PATH];
 
@@ -540,33 +573,14 @@ void FileSaveAs(HWND windowHandle)
 				}
 			}
 
-			// TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
-			WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
-
-			for (WORD i = 0; i < relevantChannels; i++)
-			{
-				InverseRealInterleavedFFT(fileEditor.channelsData[i]);
-			}
+			// On iterations after the first this call won't be expensive. It's better to have this here than before the loop because it's a big computations which can be pointless if the operation is cancelled before it's useful.
+			SetAllChannelsDomain(TIME_DOMAIN);
 
 			if (WriteWaveFileAs(fileEditor.fileInfo, filename, fileEditor.channelsData))
 			{
-				// TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
-				for (WORD i = 0; i < relevantChannels; i++)
-				{
-					RealInterleavedFFT(fileEditor.channelsData[i]);
-				}
-
 				fileEditor.currentSaveState = fileEditor.modificationStack;
 				UpdateWindowTitle();
 				break;
-			}
-			else
-			{
-				// TODO: this part is here temporarily. In the future when we draw graphs, we'll want to IFFT only channels we need (?).
-				for (WORD i = 0; i < relevantChannels; i++)
-				{
-					RealInterleavedFFT(fileEditor.channelsData[i]);
-				}
 			}
 
 			int choice = MessageBox(windowHandle, TEXT("There was a problem with creating this file."), NULL, MB_RETRYCANCEL | MB_ICONERROR);
@@ -590,7 +604,7 @@ void FileSaveAs(HWND windowHandle)
 
 			if (error == FNERR_BUFFERTOOSMALL)
 			{
-				LPCTSTR msg = error == FNERR_BUFFERTOOSMALL ? TEXT("Path name exceeds the upper limit of ") TEXT(XStringify(MAX_PATH - 4)) TEXT(" characters.") : TEXT("There was an error in retrieving the file name.");
+				LPCTSTR msg = error == FNERR_BUFFERTOOSMALL ? TEXT("Path name exceeds the upper limit of ") TXStringify(MAX_PATH - 4) TEXT(" characters.") : TEXT("There was an error in retrieving the file name.");
 				int choice = MessageBox(windowHandle, msg, NULL, MB_RETRYCANCEL | MB_ICONERROR);
 
 				if (choice == IDCANCEL)
@@ -692,10 +706,13 @@ void ApplyModificationFromInput(HWND windowHandle)
 		return;
 	}
 
+	SetChannelDomain(currentChannel, FREQUENCY_DOMAIN);
+
 	if (ApplyModification(fromFreqInt, toFreqInt, changeType, changeAmount, smoothing, currentChannel, fileEditor.channelsData, &(fileEditor.modificationStack)))
 	{
 		UpdateWindowTitle();
 		UpdateUndoRedoState();
+		PlotAndDisplayChannelGraphs(currentChannel);
 	}
 	else
 	{
@@ -738,16 +755,21 @@ void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 	if (LoadPCMInterleaved(fileInfo, &(fileEditor.channelsData)))
 	{
 		InitializeModificationStack(&(fileEditor.modificationStack));
+
+		unsigned short relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+		fileEditor.channelsDomain = calloc(relevantChannels, sizeof(FunctionDomain));
+		fileEditor.waveformGraphs = calloc(relevantChannels, sizeof(HBITMAP));
+		fileEditor.fourierGraphs = calloc(relevantChannels, sizeof(HBITMAP));
+		fileEditor.graphingDC = CreateCompatibleDC(NULL); // TODO: free this with DeleteDC (and also free the callocs above this) in CloseFileEditor, but only if they're allocated.
 		fileEditor.currentSaveState = fileEditor.modificationStack;
-		PaintFileEditor();
 
-		// TODO: this part is here temporarily. In the future when we draw graphs, we'll want to FFT only channels we need (?) and only after drawing the waveform graph.
-		WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
-
-		for (WORD i = 0; i < relevantChannels; i++)
+		// There's no reason to delete and recreate this between different files. The fact that we only allocate it once means we have to be careful to deallocate it exactly once, though, meaning not in CloseFileEditor.
+		if (fileEditor.graphingDC == NULL)
 		{
-			RealInterleavedFFT(fileEditor.channelsData[i]);
+			fileEditor.graphingDC = CreateCompatibleDC(NULL);
 		}
+
+		PaintFileEditor();
 	}
 	else // Deallocating functions if it failed.
 	{
@@ -776,6 +798,10 @@ void PaintFileEditorPermanents()
 
 	// Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
 	CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, mainWindowHandle, NULL, NULL, NULL);
+
+	// Adding static controls that will contain the bitmaps of the different graphs.
+	fileEditor.waveformGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, 50, 60, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, 50, 100 + GRAPH_HEIGHT, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	// Adding GUI for choosing what frequency to modify.
 	CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
@@ -808,7 +834,7 @@ void PaintFileEditorPermanents()
 	// Adding GUI for choosing how much smoothing to apply.
 	CreateWindow(WC_STATIC, TEXT("Smoothing:"), WS_VISIBLE | WS_CHILD, 50, 520, 80, 22, mainWindowHandle, NULL, NULL, NULL);
 	AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), 130, 520,
-						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.500"), NULL, FALSE);
+						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.") TXStringify(DEFAULT_SMOOTHING), NULL, FALSE);
 
 	// Adding buttons for ok and cancel.
 	// TODO: I'm considering moving these buttons to the center of the screen (horizontally).
@@ -825,8 +851,6 @@ void PaintFileEditorPermanents()
 
 void PaintFileEditorTemporaries()
 {
-	UpdateWindowTitle();
-
 	// Filling the tab control with the names of the channels this file has instead of the old one.
 	TabCtrl_DeleteAllItems(fileEditor.channelTabs);
 
@@ -843,8 +867,9 @@ void PaintFileEditorTemporaries()
 		TabCtrl_InsertItem(fileEditor.channelTabs, i, &tab);
 	}
 
-	// Editing the tab control brings it to front. This fixes that.
-	SetWindowPos(fileEditor.channelTabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE);
+	SetWindowPos(fileEditor.channelTabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE); // Editing the tab control brings it to front. This fixes that.
+	UpdateWindowTitle();
+	PlotAndDisplayChannelGraphs(0);
 }
 
 void ResetFileEditorPermanents()
@@ -854,15 +879,267 @@ void ResetFileEditorPermanents()
 	SendMessage(fileEditor.toFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
 	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0);
 	SendMessage(fileEditor.changeAmountTextbox, WM_SETTEXT, 0, (LPARAM)TEXT("0.000"));
+	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(TEXT("0.") TXStringify(DEFAULT_SMOOTHING)));
 	SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING); // This should fire a sync operation which will set the textbox accordingly.
+}
+
+void SetChannelDomain(unsigned short channel, FunctionDomain domain)
+{
+	if (fileEditor.channelsDomain[channel] != domain)
+	{
+		if (domain == FREQUENCY_DOMAIN)
+		{
+			RealInterleavedFFT(fileEditor.channelsData[channel]);
+		}
+		else
+		{
+			InverseRealInterleavedFFT(fileEditor.channelsData[channel]);
+		}
+
+		fileEditor.channelsDomain[channel] = domain;
+	}
+}
+
+void SetAllChannelsDomain(FunctionDomain domain)
+{
+	unsigned short relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+	for (unsigned short i = 0; i < relevantChannels; i++)
+	{
+		SetChannelDomain(i, domain);
+	}
+}
+
+void PlotChannelWaveform(unsigned short channel)
+{
+	// TODO: this is an old naive plotting algorithm. It might still come in handy for plotting waveforms with very few samples.
+	//Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);							\
+	precision##Real lengthReal = length;																								\
+	precision##Real halfHeight = GRAPH_HEIGHT / 2;																						\
+																																		\
+	for (unsigned long long i = 0; i < length; i++)																						\
+	{																																	\
+		/* Extracting the real sample from this complex function.*/																		\
+		precision##Real sample = *(CAST(&get(func, i / 2), precision##Real*) + (i % 2));												\
+																																		\
+		/* Setting the pixel that corresponds to this sample's position on the graph.*/													\
+		unsigned int xCoord = i * (GRAPH_WIDTH / lengthReal); /* TODO: consider different rounding techniques. Also clamp the pixels*/	\
+		unsigned int yCoord = halfHeight - (halfHeight * sample);																		\
+		SetPixel(fileEditor.graphingDC, xCoord, yCoord, RGB(0, 0, 0));																	\
+	}
+	
+	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
+	// TODO: potentially use a different plotting algorithm when working with a small number of samples. Maybe make it look similar to audacity's high zoom appearance.
+	// TODO: look into rounding techniques (lrint may be useful), whether we should change the yCoord function to return GRAPH_HEIGHT - 1 at most, using LineTo instead of many SetPixels, and whether some of these variables should always be doubles.
+	#define PLOT_CHANNEL_WAVEFORM_TYPED(precision)																						\
+																																		\
+	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);							\
+	precision##Real lengthReal = length;																								\
+	precision##Real stepSizeReal = lengthReal / GRAPH_WIDTH;																			\
+	precision##Real halfHeight = GRAPH_HEIGHT / 2;																						\
+																																		\
+	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																						\
+	{																																	\
+		unsigned long long startSample = ceil_##precision##Real(stepSizeReal * i);														\
+		unsigned long long endSample = ClampInt(ceil_##precision##Real(stepSizeReal * (i + 1)), 0, length);								\
+																																		\
+		precision##Real min = INFINITY;																									\
+		precision##Real max = -INFINITY;																								\
+																																		\
+		for (unsigned long long j = startSample; j < endSample; j++)																	\
+		{																																\
+			precision##Real sample = *(CAST(&get(func, j / 2), precision##Real*) + (j % 2));											\
+																																		\
+			if (sample < min)																											\
+			{																															\
+				min = sample;																											\
+			}																															\
+																																		\
+			if (sample > max)																											\
+			{																															\
+				max = sample;																											\
+			}																															\
+		}																																\
+																																		\
+		unsigned int minYCoord = ClampInt(halfHeight - (halfHeight * min), 0, GRAPH_HEIGHT);											\
+		unsigned int maxYCoord = ClampInt(halfHeight - (halfHeight * max), 0, GRAPH_HEIGHT);											\
+																																		\
+		for (unsigned int y = maxYCoord; y <= minYCoord; y++)																			\
+		{																																\
+			SetPixel(fileEditor.graphingDC, i, y, RGB(0, 0, 0));																		\
+		}																																\
+	}
+
+	SetChannelDomain(channel, TIME_DOMAIN);
+
+	if (fileEditor.waveformGraphs[channel] == NULL)
+	{
+		fileEditor.waveformGraphs[channel] = CreateBitmap(GRAPH_WIDTH, GRAPH_HEIGHT, 1, 1, NULL);
+	}
+
+	// SelectObject returns a handle to the object that was selected before the call. Windows says that you must restore the old selected object after you're done painting.
+	HBITMAP oldSelectedObj = SelectObject(fileEditor.graphingDC, fileEditor.waveformGraphs[channel]);
+
+	// Filling the bitmap with white color.
+	RECT bitmapDimensions;
+	bitmapDimensions.left = 0;
+	bitmapDimensions.top = 0;
+	bitmapDimensions.right = GRAPH_WIDTH;
+	bitmapDimensions.bottom = GRAPH_HEIGHT;
+	FillRect(fileEditor.graphingDC, &bitmapDimensions, GetStockObject(WHITE_BRUSH));
+
+	// For every sample in the function that isn't zero-padding, setting the pixel it corresponds to. Length is doubled because we'll be reading a complex sequence as if it's a real sequence of twice the length.
+	unsigned long long length = fileEditor.fileInfo->sampleLength;
+
+	// From this point on we need to know if the function uses single or double precision. Either way it's gonna be in complex interleaved form, more on that in the documentation of RealInterleavedFFT.
+	if (GetType(fileEditor.channelsData[channel]) == FloatComplexType)
+	{
+		PLOT_CHANNEL_WAVEFORM_TYPED(Float)
+	}
+	else
+	{
+		PLOT_CHANNEL_WAVEFORM_TYPED(Double)
+	}
+
+	SelectObject(fileEditor.graphingDC, oldSelectedObj);
+}
+
+void PlotChannelFourier(unsigned short channel)
+{
+	//SetChannelDomain(channel, FREQUENCY_DOMAIN);
+	
+	// TODO: plot the graph.
+	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
+	#define PLOT_CHANNEL_WAVEFORM_TYPED2(precision)																						\
+	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);							\
+	precision##Real lengthReal = length;																								\
+	precision##Real halfHeight = GRAPH_HEIGHT / 2;																						\
+																																		\
+	for (unsigned long long i = 0; i < length; i++)																						\
+	{																																	\
+		/* Extracting the real sample from this complex function.*/																		\
+		precision##Real sample = *(CAST(&get(func, i / 2), precision##Real*) + (i % 2));												\
+																																		\
+		/* Setting the pixel that corresponds to this sample's position on the graph.*/													\
+		unsigned int xCoord = i / lengthReal; /* TODO: consider different rounding techniques.*/										\
+		unsigned int yCoord = halfHeight - (halfHeight * sample);																		\
+		SetPixel(fileEditor.graphingDC, xCoord, yCoord, RGB(0, 0, 0));																	\
+	}
+
+	SetChannelDomain(channel, TIME_DOMAIN);
+
+	if (fileEditor.fourierGraphs[channel] == NULL)
+	{
+		fileEditor.fourierGraphs[channel] = CreateBitmap(GRAPH_WIDTH, GRAPH_HEIGHT, 1, 1, NULL);
+	}
+
+	// SelectObject returns a handle to the object that was selected before the call. Windows says that you must restore the old selected object after you're done painting.
+	HBITMAP oldSelectedObj = SelectObject(fileEditor.graphingDC, fileEditor.fourierGraphs[channel]);
+
+	// Filling the bitmap with white color.
+	RECT bitmapDimensions;
+	bitmapDimensions.left = 0;
+	bitmapDimensions.top = 0;
+	bitmapDimensions.right = GRAPH_WIDTH;
+	bitmapDimensions.bottom = GRAPH_HEIGHT;
+	FillRect(fileEditor.graphingDC, &bitmapDimensions, GetStockObject(WHITE_BRUSH));
+
+	// For every sample in the function that isn't zero-padding, setting the pixel it corresponds to. Length is doubled because we'll be reading a complex sequence as if it's a real sequence of twice the length.
+	unsigned long long length = fileEditor.fileInfo->sampleLength;
+
+	// From this point on we need to know if the function uses single or double precision. Either way it's gonna be in complex interleaved form, more on that in the documentation of RealInterleavedFFT.
+	if (GetType(fileEditor.channelsData[channel]) == FloatComplexType)
+	{
+		PLOT_CHANNEL_WAVEFORM_TYPED2(Float)
+	}
+	else
+	{
+		PLOT_CHANNEL_WAVEFORM_TYPED2(Double)
+	}
+
+	SelectObject(fileEditor.graphingDC, oldSelectedObj);
+}
+
+void PlotChannelGraphs(unsigned short channel)
+{
+	// We check what the function's current domain is so we know which order is most efficient for doing this.
+	if (fileEditor.channelsDomain[channel] == TIME_DOMAIN)
+	{
+		PlotChannelWaveform(channel);
+		PlotChannelFourier(channel);
+	}
+	else
+	{
+		PlotChannelFourier(channel);
+		PlotChannelWaveform(channel);
+	}
+}
+
+void DisplayChannelWaveform(unsigned short channel)
+{
+	if (fileEditor.waveformGraphs[channel] == NULL)
+	{
+		fprintf(stderr, "Tried to display the waveform of channel %hu but it hasn't been plotted yet.\n", channel);
+		return;
+	}
+
+	// TODO: this commented code successfully paints the graphs with color, but it uses beginpaint outside of the WM_PAINT message handler which is forbidden. I need to figure out how to make this work without beginpaint.
+	// PAINTSTRUCT ps;
+	// HDC tmpDC;
+	// HBITMAP oldBitmap;
+
+	// BeginPaint(mainWindowHandle, &ps);
+	// tmpDC = CreateCompatibleDC(ps.hdc);
+	// oldBitmap = (HBITMAP) SelectObject(tmpDC, fileEditor.waveformGraphs[channel]);
+	// SetBkColor(ps.hdc, RGB(255, 128, 0));
+	// SetTextColor(ps.hdc, RGB(0, 128, 255));
+	// BitBlt(ps.hdc, 50, 60, GRAPH_WIDTH, GRAPH_HEIGHT,
+	// tmpDC, 0, 0, SRCCOPY);
+	// SelectObject(tmpDC, oldBitmap);
+	// DeleteDC(tmpDC);
+	// EndPaint(mainWindowHandle, &ps);
+	
+    SendMessage(fileEditor.waveformGraphStatic, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)fileEditor.waveformGraphs[channel]);
+}
+
+void DisplayChannelFourier(unsigned short channel)
+{
+	if (fileEditor.fourierGraphs[channel] == NULL)
+	{
+		fprintf(stderr, "Tried to display the fourier transform of channel %hu but it hasn't been plotted yet.\n", channel);
+		return;
+	}
+
+	SendMessage(fileEditor.fourierGraphStatic, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)fileEditor.fourierGraphs[channel]);
+}
+
+void DisplayChannelGraphs(unsigned short channel)
+{
+	DisplayChannelWaveform(channel);
+	DisplayChannelFourier(channel);
+}
+
+void PlotAndDisplayChannelGraphs(unsigned short channel)
+{
+	PlotChannelGraphs(channel);
+	DisplayChannelGraphs(channel);
 }
 
 void CloseFileEditor()
 {
 	DeallocateChannelsData();
-	DeallocateModificationStack(&(fileEditor.modificationStack));
+	DeallocateChannelsGraphs();
+	DeallocateModificationStack(fileEditor.modificationStack);
 	CloseWaveFile(fileEditor.fileInfo);
+	free(fileEditor.channelsDomain);
+
 	fileEditor.fileInfo = NULL;
+	fileEditor.channelsData = NULL;
+	fileEditor.channelsDomain = NULL;
+	fileEditor.waveformGraphs = NULL;
+	fileEditor.fourierGraphs = NULL;
+	fileEditor.modificationStack = NULL;
+	fileEditor.currentSaveState = NULL;
 
 	UpdateUndoRedoState();
 }
@@ -871,16 +1148,52 @@ void DeallocateChannelsData()
 {
 	if (fileEditor.channelsData != NULL)
 	{
-		WORD relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+		unsigned short relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
 
-		for (WORD i = 0; i < relevantChannels; i++)
+		for (unsigned short i = 0; i < relevantChannels; i++)
 		{
 			DeallocateFunctionInternals(fileEditor.channelsData[i]);
 			free(fileEditor.channelsData[i]);
 		}
 
 		free(fileEditor.channelsData);
-		fileEditor.channelsData = NULL;
+	}
+}
+
+void DeallocateChannelsGraphs()
+{
+	// Dodging a segfault with GetRelevantChannelsCount.
+	if (fileEditor.fileInfo == NULL)
+	{
+		return;
+	}
+
+	unsigned short relevantChannels = GetRelevantChannelsCount(fileEditor.fileInfo);
+
+	if (fileEditor.waveformGraphs != NULL)
+	{
+		for (unsigned short i = 0; i < relevantChannels; i++)
+		{
+			if (fileEditor.waveformGraphs[i] != NULL)
+			{
+				DeleteObject(fileEditor.waveformGraphs[i]);
+			}
+		}
+
+		free(fileEditor.waveformGraphs);
+	}
+
+	if (fileEditor.fourierGraphs != NULL)
+	{
+		for (unsigned short i = 0; i < relevantChannels; i++)
+		{
+			if (fileEditor.fourierGraphs[i] != NULL)
+			{
+				DeleteObject(fileEditor.fourierGraphs[i]);
+			}
+		}
+
+		free(fileEditor.fourierGraphs);
 	}
 }
 
@@ -934,6 +1247,12 @@ char IsEditorOpen()
 	return fileEditor.channelTabs != NULL;
 }
 
+char HasUnsavedChanges()
+{
+	// TODO: if the current save state was freed, it's possible something else was allocated in its stead (however unlikely) which would cause this to not fire even though we want it to.
+	return fileEditor.modificationStack != NULL && fileEditor.modificationStack != fileEditor.currentSaveState;
+}
+
 #pragma endregion // MainWindow.
 
 #pragma region NewFileOptions
@@ -973,11 +1292,11 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
 {
 	// Adding trackbar-textbox-units triple for selecting file length.
 	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox), 10, 16,
-						   FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_LENGTH)), TEXT("seconds"), TRUE);
+						   FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_LENGTH), TEXT("seconds"), TRUE);
 
 	// Adding trackbar-textbox-units triple for selecting file sample rate.
 	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox), 10, 61,
-						   FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TEXT(XStringify(NEW_FILE_DEFAULT_FREQUENCY)), TEXT("Hz"), TRUE);
+						   FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_FREQUENCY), TEXT("Hz"), TRUE);
 
 	// Adding a radio menu for choosing bit depth. Important that we add these such that the i'th cell indicates i+1 bytes.
 	newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 18, 95, 80, 30, windowHandle, NULL, NULL, NULL);
@@ -1171,8 +1490,7 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, int xPos, int yPos, int minValue, int maxValue, int defaultValue, int linesize, int pagesize, LPCTSTR defaultValueStr, LPCTSTR units, char naturalsOnly)
 {
 	// Calculating tick length given the interval length and how many ticks we want to have. Rounding it up instead of down because I would rather have too few ticks than too many.
-	div_t divResult = div(maxValue - minValue, TRACKBAR_TICKS);
-	WPARAM tickLength = divResult.quot + (divResult.rem ? 1 : 0);
+	WPARAM tickLength = DivCeilInt(maxValue - minValue, TRACKBAR_TICKS);
 
 	// Adding trackbar.
 	*trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, xPos, yPos - 6, 200, 30, windowHandle, 0, NULL, NULL);
@@ -1223,7 +1541,7 @@ void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
 	{
 		long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
 		long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
-		val = val > max ? max : (val < min ? min : val); // Clamping length between min and max.
+		val = ClampInt(val, min, max);
 		SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)val);
 	}
 }
@@ -1282,12 +1600,6 @@ LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
 		default:
 			return DefSubclassProc(windowHandle, msg, wparam, lparam);
 	}
-}
-
-char HasUnsavedChanges()
-{
-	// TODO: if the current save state was freed, it's possible something else was allocated in its stead (however unlikely) which would cause this to not fire even though we want it to.
-	return fileEditor.modificationStack != NULL && fileEditor.modificationStack != fileEditor.currentSaveState;
 }
 
 #pragma endregion // Misc.

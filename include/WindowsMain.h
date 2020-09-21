@@ -3,7 +3,13 @@
 
 #include "WaveReadWriter.h"
 #include "SoundEditor.h"
-#include <windows.h> // Do I need to explain why this is included?
+#include <windows.h>
+
+typedef enum
+{
+	TIME_DOMAIN = 0, // Setting TIME_DOMAIN to 0 makes it the default, works nicely with calloc.
+	FREQUENCY_DOMAIN = 1
+} FunctionDomain;
 
 typedef struct NewFileOptionsWindow
 {
@@ -18,12 +24,21 @@ typedef struct NewFileOptionsWindow
 
 typedef struct FileEditor
 {
-	FileInfo* fileInfo;
-	Function** channelsData;		 // An array of function pointers. This can be either the waveform or the DFT, we swap between them.
-	Modification* modificationStack; // A stack of all the changes the user applies, for undoing and redoing them.
-	Modification* currentSaveState;	 // The last change that was saved.
+	FileInfo* fileInfo;					// Info about the file that's being edited, such as its format, size, etc.
+	Function** channelsData;			// An array of function pointers. This can be either the waveform or the DFT, we swap between them.
+	FunctionDomain* channelsDomain;		// An array that contains the current domains of all the channels (time if it currently has the waveform, frequency if it currently has the DFT).
 
+	HBITMAP* waveformGraphs;			// An array of bitmaps including graphs of all the channels' waveforms. NULL for channels that aren't drawn yet.
+	HBITMAP* fourierGraphs;				// An array of bitmaps including graphs of all the channels' fourier transforms. NULL for channels that aren't drawn yet.
+	HDC graphingDC;						// The device context used to paint all the waveform and frequency graphs.
+
+	Modification* modificationStack;	// A stack of all the changes the user applies, for undoing and redoing them. Only NULL when no file is open.
+	Modification* currentSaveState;		// The last change that was saved.
+
+	// The following fields are just handles to some important windows of the file editor.
 	HWND channelTabs;
+	HWND waveformGraphStatic;
+	HWND fourierGraphStatic;
 	HWND fromFreqTextbox;
 	HWND toFreqTextbox;
 	HWND changeTypeDropdown;
@@ -106,11 +121,41 @@ void PaintFileEditorTemporaries();
 // Resets values inside the permanent parts of the file editor for when new files are opened.
 void ResetFileEditorPermanents();
 
+// Sets the given channel to the given domain.
+void SetChannelDomain(unsigned short, FunctionDomain);
+
+// Sets all channels to the given domain.
+void SetAllChannelsDomain(FunctionDomain);
+
+// Paints the bitmap containing the waveform of the given channel (but doesn't display it).
+void PlotChannelWaveform(unsigned short);
+
+// Paints the bitmap containing the fourier transform of the given channel (but doesn't display it).
+void PlotChannelFourier(unsigned short);
+
+// Paints the bitmaps containing the waveform and fourier transform of the given channel (but doesn't display them).
+void PlotChannelGraphs(unsigned short);
+
+// Displays the given channel's waveform graph. The graph has to be painted before calling this.
+void DisplayChannelWaveform(unsigned short);
+
+// Displays the given channel's fourier transform graph. The graph has to be painted before calling this.
+void DisplayChannelFourier(unsigned short);
+
+// Displays the given channel's waveform fourier transform graphs. The graphs have to be painted before calling this.
+void DisplayChannelGraphs(unsigned short);
+
+// Plots and displays both the waveform and fourier transform graphs of a given channel.
+void PlotAndDisplayChannelGraphs(unsigned short);
+
 // Deallocates memory allocated for file editing and erases the editor from the window.
 void CloseFileEditor();
 
 // Frees memory that was reserved for storing the PCM/fourier functions of all the channels.
 void DeallocateChannelsData();
+
+// Frees memory held by bitmaps for the various channels' waveform and fourier graphs.
+void DeallocateChannelsGraphs();
 
 // Sets the title of the main window to display the current open file's name.
 void UpdateWindowTitle();
@@ -120,6 +165,10 @@ void UpdateUndoRedoState();
 
 // Returns nonzero iff the file editor is open, meaning a file has been created or opened at least once.
 char IsEditorOpen();
+
+// Returns zero iff there are no unsaved changes.
+char HasUnsavedChanges();
+
 
 // Handler for any messages sent to the new file options dialog.
 LRESULT CALLBACK NewFileOptionsProcedure(HWND, UINT, WPARAM, LPARAM);
@@ -139,6 +188,7 @@ void ApplyNewFileOptions(HWND);
 // Processes any WM_COMMAND message the new file window may receive.
 void ProcessNewFileOptionsCommand(HWND, WPARAM, LPARAM);
 
+
 // Handler for any messages sent to the new file options dialog.
 LRESULT CALLBACK SelectFileOptionProcedure(HWND, UINT, WPARAM, LPARAM);
 
@@ -150,6 +200,7 @@ void CloseSelectFileOption(HWND);
 
 // Processes any WM_COMMAND message sent to the select file option window.
 void ProcessSelectFileOptionCommand(HWND, WPARAM, LPARAM);
+
 
 // Paints a trackbar-textbox-units triple with the given parameters.
 void AddTrackbarWithTextbox(HWND, HWND*, HWND*, int, int, int, int, int, int, int, LPCTSTR, LPCTSTR, char);
@@ -168,8 +219,5 @@ void SyncTrackbarToTextboxFloat(HWND, HWND);
 
 // Procedure for textboxes that only accept float numbers.
 LRESULT CALLBACK FloatTextboxWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
-
-// Returns zero iff there are no unsaved changes.
-char HasUnsavedChanges();
 
 #endif

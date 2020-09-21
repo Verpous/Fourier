@@ -23,12 +23,10 @@ unsigned long long BitReverse(unsigned int, unsigned long long);
 /* Swaps each element in the array with its bit-reverse. Assumes function length is a power of two.*/															\
 void BitReverseArr_##type(Function_##type f);																													\
 																																								\
-/* As described in this document: https://www.ti.com/lit/an/spra291/spra291.pdf?ts=1597858546752&ref_url=https%253A%252F%252Fwww.google.co.il%252F*/			\
-/* We treat f as if it's already a complex sequence where the real parts correspond to even indices of g, and the imaginary parts correspond to odds*/			\
-/* This function just applies the FFT and then the postprocessing to extract the DFT of g from it.*/															\
+/* Calculates the DFT of a real sequence in complex interleaved form.*/																							\
 void RealInterleavedFFT_##type(Function_##type);																												\
 																																								\
-/* Takes half the DFT of a real sequence and calculates the original interleaved sequence described above.*/													\
+/* Takes half the DFT of a real sequence and calculates the original interleaved sequence.*/																	\
 void InverseRealInterleavedFFT_##type(Function_##type);																											\
 																																								\
 /* In-place cooley-tukey FFT. Assumes function length is a power of two.*/																						\
