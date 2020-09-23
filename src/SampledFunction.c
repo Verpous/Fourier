@@ -94,6 +94,93 @@ void CopySamples_##type(Function_##type dest, Function_##type src, unsigned long
 	}																																						\
 }
 
+// TODO: potential optimization - use internal knowledge about how functions work to read from them for min and max more efficiently.*/
+#define SAMPLED_FUNCTION_C_PRECISION_CONTENTS(precision)																									\
+precision##Real GetMax_##precision##Real(Function_##precision##Real f, unsigned long long startIndex, unsigned long long endIndex)							\
+{																																							\
+	precision##Real max = -INFINITY;																														\
+																																							\
+	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	{																																						\
+		precision##Real sample = get(f, i);																													\
+																																							\
+		if (sample > max)																																	\
+		{																																					\
+			max = sample;																																	\
+		}																																					\
+	}																																						\
+																																							\
+	return max;																																				\
+}																																							\
+																																							\
+precision##Real GetMin_##precision##Real(Function_##precision##Real f, unsigned long long startIndex, unsigned long long endIndex)							\
+{																																							\
+	precision##Real min = INFINITY;																															\
+																																							\
+	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	{																																						\
+		precision##Real sample = get(f, i);																													\
+																																							\
+		if (sample < min)																																	\
+		{																																					\
+			min = sample;																																	\
+		}																																					\
+	}																																						\
+																																							\
+	return min;																																				\
+}																																							\
+																																							\
+precision##Complex GetMax_##precision##Complex(Function_##precision##Complex f, unsigned long long startIndex, unsigned long long endIndex)					\
+{																																							\
+	precision##Real maxSqrMagnitude = -INFINITY;																											\
+	precision##Complex maxSample = NAN;																														\
+																																							\
+	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	{																																						\
+		precision##Complex sample = get(f, i);																												\
+		precision##Real sqrMag = SquareMagnitude##precision##Complex(sample);																				\
+																																							\
+		if (sqrMag > maxSqrMagnitude)																														\
+		{																																					\
+			maxSample = sample;																																\
+			maxSqrMagnitude = sqrMag;																														\
+		}																																					\
+	}																																						\
+																																							\
+	return maxSample;																																		\
+}																																							\
+																																							\
+precision##Complex GetMin_##precision##Complex(Function_##precision##Complex f, unsigned long long startIndex, unsigned long long endIndex)					\
+{																																							\
+	precision##Real minSqrMagnitude = INFINITY;																												\
+	precision##Complex minSample = NAN;																														\
+																																							\
+	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	{																																						\
+		precision##Complex sample = get(f, i);																												\
+		precision##Real sqrMag = SquareMagnitude##precision##Complex(sample);																				\
+																																							\
+		if (sqrMag < minSqrMagnitude)																														\
+		{																																					\
+			minSample = sample;																																\
+			minSqrMagnitude = sqrMag;																														\
+		}																																					\
+	}																																						\
+																																							\
+	return minSample;																																		\
+}																																							\
+																																							\
+Function_##precision##Real ReadComplexFunctionAsReal_##precision##Complex(Function_##precision##Complex* f)													\
+{																																							\
+	Function_##precision##Real fReal;																														\
+	fReal.funcType = precision##Real##Type;																													\
+	fReal.segmentLen = 2 * f->segmentLen;																													\
+	fReal.segmentCount = f->segmentCount;																													\
+	fReal.totalLen = 2 * f->totalLen;																														\
+	fReal.samples = ((precision##Real**)f->samples);																										\
+	return fReal;																																			\
+}
+
 unsigned long long NumOfSamples(Function* f)
 {
 	// The total length is in the same place no matter what type f has, so we just cast it so some type and read it that way.
@@ -151,3 +238,8 @@ void CopySamples(Function* dest, Function* src, unsigned long long destFrom, uns
 
 SAMPLED_FUNCTION_C_TYPED_CONTENTS(FloatComplex)
 SAMPLED_FUNCTION_C_TYPED_CONTENTS(DoubleComplex)
+SAMPLED_FUNCTION_C_TYPED_CONTENTS(FloatReal)
+SAMPLED_FUNCTION_C_TYPED_CONTENTS(DoubleReal)
+
+SAMPLED_FUNCTION_C_PRECISION_CONTENTS(Float)
+SAMPLED_FUNCTION_C_PRECISION_CONTENTS(Double)

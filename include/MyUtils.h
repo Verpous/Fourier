@@ -2,6 +2,7 @@
 #define MY_UTILS_H
 
 #include <windows.h> // For some winapi types.
+#include <complex.h> // For dealing with complex numbers.
 
 #define KILO (1 << 10)
 #define MEGA (1 << 20)
@@ -27,32 +28,40 @@
 #define TXStringify(x) TEXT(XStringify(x))
 
 // Macros that rename float functions for different precisions.
-#define cexp_DoubleComplex(x) cexp(x)
 #define cexp_FloatComplex(x) cexpf(x)
+#define cexp_DoubleComplex(x) cexp(x)
 
-#define conj_DoubleComplex(x) conj(x)
 #define conj_FloatComplex(x) conjf(x)
+#define conj_DoubleComplex(x) conj(x)
 
-#define carg_DoubleComplex(x) carg(x)
 #define carg_FloatComplex(x) cargf(x)
+#define carg_DoubleComplex(x) carg(x)
 
-#define cabs_DoubleComplex(x) cabs(x)
 #define cabs_FloatComplex(x) cabsf(x)
+#define cabs_DoubleComplex(x) cabs(x)
 
-#define cos_DoubleReal(x) cos(x)
+#define creal_FloatComplex(x) crealf(x)
+#define creal_DoubleComplex(x) creal(x)
+
+#define cimag_FloatComplex(x) cimagf(x)
+#define cimag_DoubleComplex(x) cimag(x)
+
 #define cos_FloatReal(x) cosf(x)
+#define cos_DoubleReal(x) cos(x)
 
-#define ceil_DoubleReal(x) ceil(x)
 #define ceil_FloatReal(x) ceilf(x)
+#define ceil_DoubleReal(x) ceil(x)
 
-#define floor_DoubleReal(x) floor(x)
 #define floor_FloatReal(x) floorf(x)
+#define floor_DoubleReal(x) floor(x)
 
-#define abs_DoubleReal(f) fabs(f)
 #define abs_FloatReal(f) fabsf(f)
+#define abs_DoubleReal(f) fabs(f)
 
-#define lround_DoubleReal(f) lround(f)
 #define lround_FloatReal(f) lroundf(f)
+#define lround_DoubleReal(f) lround(f)
+
+// TODO: declare any of these that make sense as inline.
 
 // Returns a random int in the range [min, max).
 int RandRange(int, int);
@@ -74,6 +83,12 @@ double ClampDouble(double, double, double);
 
 // Clamps an integer between two values.
 long long ClampInt(long long, long long, long long);
+
+// Returns the square magnitude of a single-precision float complex.
+float SquareMagnitudeFloatComplex(float complex);
+
+// Returns the square magnitude of a double-precision float complex.
+double SquareMagnitudeDoubleComplex(double complex);
 
 // Returns the division with ceiling of two integers.
 long long DivCeilInt(long long, long long);

@@ -66,7 +66,7 @@
 
 // Graphing constants. Sizes are in pixels.
 #define GRAPH_WIDTH 750
-#define GRAPH_HEIGHT 140 // This should be an even number because we divide it by 2.
+#define GRAPH_HEIGHT 155 // This should be an odd number because we divide (GRAPH_HEIGHT - 1) by 2 and so there's as many pixels above 0 as below.
 
 // WindowClass names.
 #define WC_MAINWINDOW TEXT("MainWindow")
@@ -622,6 +622,7 @@ void Undo(HWND windowHandle)
 	{
 		UpdateWindowTitle();
 		UpdateUndoRedoState();
+		PlotAndDisplayChannelGraphs(TabCtrl_GetCurSel(fileEditor.channelTabs));
 	}
 }
 
@@ -631,6 +632,7 @@ void Redo(HWND windowHandle)
 	{
 		UpdateWindowTitle();
 		UpdateUndoRedoState();
+		PlotAndDisplayChannelGraphs(TabCtrl_GetCurSel(fileEditor.channelTabs));
 	}
 }
 
@@ -804,36 +806,36 @@ void PaintFileEditorPermanents()
 	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, 50, 100 + GRAPH_HEIGHT, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	// Adding GUI for choosing what frequency to modify.
-	CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD, 50, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 130, 428, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD, 50, 450, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 130, 448, 65, 22, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.fromFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.fromFreqTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0);		 // Setting character limit.
-	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 430, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 450, 60, 22, mainWindowHandle, NULL, NULL, NULL);
 
-	CreateWindow(WC_STATIC, TEXT("To:"), WS_VISIBLE | WS_CHILD, 270, 430, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 428, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("To:"), WS_VISIBLE | WS_CHILD, 270, 450, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 448, 65, 22, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.toFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.toFreqTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0);	   // Setting character limit.
-	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 410, 430, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 410, 450, 60, 22, mainWindowHandle, NULL, NULL, NULL);
 
 	// Adding GUI for choosing what change to apply.
 	// Adding a dropdown for choosing the change type.
-	CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 475, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS, 130, 470, 90, 100, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 495, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS, 130, 490, 90, 100, mainWindowHandle, NULL, NULL, NULL);
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Multiply"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Add"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Subtract"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0); // Setting "multiply" as the default selection.
 
 	// Adding a textbox for choosing the change amount.
-	CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD, 270, 475, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT("0.000"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 473, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD, 270, 495, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT("0.000"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 493, 65, 22, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.changeAmountTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.changeAmountTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0);		 // Setting character limit.
 
 	// Adding GUI for choosing how much smoothing to apply.
-	CreateWindow(WC_STATIC, TEXT("Smoothing:"), WS_VISIBLE | WS_CHILD, 50, 520, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), 130, 520,
+	CreateWindow(WC_STATIC, TEXT("Smoothing:"), WS_VISIBLE | WS_CHILD, 50, 540, 80, 22, mainWindowHandle, NULL, NULL, NULL);
+	AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), 130, 540,
 						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.") TXStringify(DEFAULT_SMOOTHING), NULL, FALSE);
 
 	// Adding buttons for ok and cancel.
@@ -913,61 +915,43 @@ void SetAllChannelsDomain(FunctionDomain domain)
 void PlotChannelWaveform(unsigned short channel)
 {
 	// TODO: this is an old naive plotting algorithm. It might still come in handy for plotting waveforms with very few samples.
-	//Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);							\
-	precision##Real lengthReal = length;																								\
-	precision##Real halfHeight = GRAPH_HEIGHT / 2;																						\
-																																		\
-	for (unsigned long long i = 0; i < length; i++)																						\
-	{																																	\
-		/* Extracting the real sample from this complex function.*/																		\
-		precision##Real sample = *(CAST(&get(func, i / 2), precision##Real*) + (i % 2));												\
-																																		\
-		/* Setting the pixel that corresponds to this sample's position on the graph.*/													\
-		unsigned int xCoord = i * (GRAPH_WIDTH / lengthReal); /* TODO: consider different rounding techniques. Also clamp the pixels*/	\
-		unsigned int yCoord = halfHeight - (halfHeight * sample);																		\
-		SetPixel(fileEditor.graphingDC, xCoord, yCoord, RGB(0, 0, 0));																	\
+	//Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);													\
+	precision##Real lengthReal = length;																														\
+	precision##Real halfHeight = GRAPH_HEIGHT / 2;																												\
+																																								\
+	for (unsigned long long i = 0; i < length; i++)																												\
+	{																																							\
+		/* Extracting the real sample from this complex function.*/																								\
+		precision##Real sample = *(CAST(&get(func, i / 2), precision##Real*) + (i % 2));																		\
+																																								\
+		/* Setting the pixel that corresponds to this sample's position on the graph.*/																			\
+		unsigned int xCoord = i * (GRAPH_WIDTH / lengthReal); /* TODO: consider different rounding techniques. Also clamp the pixels*/							\
+		unsigned int yCoord = halfHeight - (halfHeight * sample);																								\
+		SetPixel(fileEditor.graphingDC, xCoord, yCoord, WHITE_COLOR);																							\
 	}
 	
 	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
 	// TODO: potentially use a different plotting algorithm when working with a small number of samples. Maybe make it look similar to audacity's high zoom appearance.
-	// TODO: look into rounding techniques (lrint may be useful), whether we should change the yCoord function to return GRAPH_HEIGHT - 1 at most, using LineTo instead of many SetPixels, and whether some of these variables should always be doubles.
-	#define PLOT_CHANNEL_WAVEFORM_TYPED(precision)																						\
-																																		\
-	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);							\
-	precision##Real lengthReal = length;																								\
-	precision##Real stepSizeReal = lengthReal / GRAPH_WIDTH;																			\
-	precision##Real halfHeight = GRAPH_HEIGHT / 2;																						\
-																																		\
-	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																						\
-	{																																	\
-		unsigned long long startSample = ceil_##precision##Real(stepSizeReal * i);														\
-		unsigned long long endSample = ClampInt(ceil_##precision##Real(stepSizeReal * (i + 1)), 0, length);								\
-																																		\
-		precision##Real min = INFINITY;																									\
-		precision##Real max = -INFINITY;																								\
-																																		\
-		for (unsigned long long j = startSample; j < endSample; j++)																	\
-		{																																\
-			precision##Real sample = *(CAST(&get(func, j / 2), precision##Real*) + (j % 2));											\
-																																		\
-			if (sample < min)																											\
-			{																															\
-				min = sample;																											\
-			}																															\
-																																		\
-			if (sample > max)																											\
-			{																															\
-				max = sample;																											\
-			}																															\
-		}																																\
-																																		\
-		unsigned int minYCoord = ClampInt(halfHeight - (halfHeight * min), 0, GRAPH_HEIGHT);											\
-		unsigned int maxYCoord = ClampInt(halfHeight - (halfHeight * max), 0, GRAPH_HEIGHT);											\
-																																		\
-		for (unsigned int y = maxYCoord; y <= minYCoord; y++)																			\
-		{																																\
-			SetPixel(fileEditor.graphingDC, i, y, RGB(0, 0, 0));																		\
-		}																																\
+	#define PLOT_CHANNEL_WAVEFORM_TYPED(precision)																												\
+	Function_##precision##Real func = ReadComplexFunctionAsReal_##precision##Complex(fileEditor.channelsData[channel]);											\
+	precision##Real halfHeight = (GRAPH_HEIGHT - 1) / 2.0;																										\
+																																								\
+	/* For every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/						\
+	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																												\
+	{																																							\
+		/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/											\
+		unsigned long long startSample = ceil_DoubleReal(stepSize * i);																							\
+		unsigned long long endSample = ClampInt(ceil_DoubleReal(stepSize * (i + 1)), 0, length);																\
+																																								\
+		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
+		precision##Real min = GetMin_##precision##Real(func, startSample, endSample);																			\
+		precision##Real max = GetMax_##precision##Real(func, startSample, endSample);																			\
+																																								\
+		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
+		unsigned int minYCoord = ClampInt(halfHeight - (halfHeight * min), 0, GRAPH_HEIGHT - 1);																\
+		unsigned int maxYCoord = ClampInt(halfHeight - (halfHeight * max), 0, GRAPH_HEIGHT - 1);																\
+		MoveToEx(fileEditor.graphingDC, i, maxYCoord, NULL);																									\
+		LineTo(fileEditor.graphingDC, i, minYCoord + 1); /* LineTo doesn't color the last pixel which is why we add +1.*/										\
 	}
 
 	SetChannelDomain(channel, TIME_DOMAIN);
@@ -976,7 +960,7 @@ void PlotChannelWaveform(unsigned short channel)
 	{
 		fileEditor.waveformGraphs[channel] = CreateBitmap(GRAPH_WIDTH, GRAPH_HEIGHT, 1, 1, NULL);
 	}
-
+	
 	// SelectObject returns a handle to the object that was selected before the call. Windows says that you must restore the old selected object after you're done painting.
 	HBITMAP oldSelectedObj = SelectObject(fileEditor.graphingDC, fileEditor.waveformGraphs[channel]);
 
@@ -990,6 +974,7 @@ void PlotChannelWaveform(unsigned short channel)
 
 	// For every sample in the function that isn't zero-padding, setting the pixel it corresponds to. Length is doubled because we'll be reading a complex sequence as if it's a real sequence of twice the length.
 	unsigned long long length = fileEditor.fileInfo->sampleLength;
+	DoubleReal stepSize = length / ((DoubleReal)GRAPH_WIDTH); // Always double precision because it's used for sample indices, not sample values.
 
 	// From this point on we need to know if the function uses single or double precision. Either way it's gonna be in complex interleaved form, more on that in the documentation of RealInterleavedFFT.
 	if (GetType(fileEditor.channelsData[channel]) == FloatComplexType)
@@ -1005,28 +990,30 @@ void PlotChannelWaveform(unsigned short channel)
 }
 
 void PlotChannelFourier(unsigned short channel)
-{
-	//SetChannelDomain(channel, FREQUENCY_DOMAIN);
-	
-	// TODO: plot the graph.
+{	
 	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
-	#define PLOT_CHANNEL_WAVEFORM_TYPED2(precision)																						\
-	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);							\
-	precision##Real lengthReal = length;																								\
-	precision##Real halfHeight = GRAPH_HEIGHT / 2;																						\
-																																		\
-	for (unsigned long long i = 0; i < length; i++)																						\
-	{																																	\
-		/* Extracting the real sample from this complex function.*/																		\
-		precision##Real sample = *(CAST(&get(func, i / 2), precision##Real*) + (i % 2));												\
-																																		\
-		/* Setting the pixel that corresponds to this sample's position on the graph.*/													\
-		unsigned int xCoord = i / lengthReal; /* TODO: consider different rounding techniques.*/										\
-		unsigned int yCoord = halfHeight - (halfHeight * sample);																		\
-		SetPixel(fileEditor.graphingDC, xCoord, yCoord, RGB(0, 0, 0));																	\
+	#define PLOT_CHANNEL_FOURIER_TYPED(precision)																												\
+	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);													\
+	precision##Real totalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length));															\
+	precision##Real yMappingSlope = (GRAPH_HEIGHT - 1) / totalMax; /* Slope of the linear function which maps samples to y pixels.*/							\
+																																								\
+	/* For every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/						\
+	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																												\
+	{																																							\
+		/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/											\
+		unsigned long long startSample = ceil_DoubleReal(stepSize * i);																							\
+		unsigned long long endSample = ClampInt(ceil_DoubleReal(stepSize * (i + 1)), 0, length);																\
+																																								\
+		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
+		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample));												\
+																																								\
+		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
+		unsigned int yCoord = (GRAPH_HEIGHT - 1) - (yMappingSlope * max);																						\
+		MoveToEx(fileEditor.graphingDC, i, GRAPH_HEIGHT - 1, NULL);																								\
+		LineTo(fileEditor.graphingDC, i, yCoord + 1);																											\
 	}
 
-	SetChannelDomain(channel, TIME_DOMAIN);
+	SetChannelDomain(channel, FREQUENCY_DOMAIN);
 
 	if (fileEditor.fourierGraphs[channel] == NULL)
 	{
@@ -1045,16 +1032,17 @@ void PlotChannelFourier(unsigned short channel)
 	FillRect(fileEditor.graphingDC, &bitmapDimensions, GetStockObject(WHITE_BRUSH));
 
 	// For every sample in the function that isn't zero-padding, setting the pixel it corresponds to. Length is doubled because we'll be reading a complex sequence as if it's a real sequence of twice the length.
-	unsigned long long length = fileEditor.fileInfo->sampleLength;
+	unsigned long long length = NumOfSamples(fileEditor.channelsData[channel]);
+	DoubleReal stepSize = length / ((DoubleReal)GRAPH_WIDTH); // Always double precision because it's used for sample indices, not sample values.
 
 	// From this point on we need to know if the function uses single or double precision. Either way it's gonna be in complex interleaved form, more on that in the documentation of RealInterleavedFFT.
 	if (GetType(fileEditor.channelsData[channel]) == FloatComplexType)
 	{
-		PLOT_CHANNEL_WAVEFORM_TYPED2(Float)
+		PLOT_CHANNEL_FOURIER_TYPED(Float)
 	}
 	else
 	{
-		PLOT_CHANNEL_WAVEFORM_TYPED2(Double)
+		PLOT_CHANNEL_FOURIER_TYPED(Double)
 	}
 
 	SelectObject(fileEditor.graphingDC, oldSelectedObj);

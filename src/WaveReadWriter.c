@@ -552,9 +552,11 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 {
 	// This macro is basically this entire function, except for all the different byte depths we can have.
 	#define LOAD_PCM_INTERLEAVED_TYPED(precision, depth)																																	\
+	/* This declaration needs to be made inside the macro, but the variable name has to be distinct per macro call to not piss off gcc so we append the depth.*/							\
+	Function_##precision##Real funcs[relevantChannels];																																	\
 	*channelsData = calloc(relevantChannels, sizeof(Function_##precision##Complex *));																										\
 																																															\
-	for (WORD i = 0; i < relevantChannels; i++)																																				\
+	for (unsigned short i = 0; i < relevantChannels; i++)																																	\
 	{																																														\
 		(*channelsData)[i] = calloc(1, sizeof(Function_##precision##Complex));																												\
 																																															\
@@ -563,10 +565,10 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 			free(buffer);																																									\
 			return FALSE;																																									\
 		}																																													\
-	}																																														\
 																																															\
-	/* This declaration needs to be made inside the macro, but the variable name has to be distinct per macro call to not piss off gcc so we append the depth.*/							\
-	Function_##precision##Complex** funcs##depth = *((Function_##precision##Complex***)channelsData);																						\
+		/* This will make the functions faster and more convenient to read and write to in interleaved form. Useful because we'll be doing that a lot.*/									\
+		funcs[i] = ReadComplexFunctionAsReal_##precision##Complex((*channelsData)[i]);																										\
+	}																																														\
 																																															\
 	/* Skipping the part where we read from the file if the file is newly created.*/																										\
 	if (!IsFileNew(fileInfo))																																								\
@@ -616,10 +618,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 							/* The conversion also balances out the fact that there's more negative than positive numbers in two's complement.*/											\
 							precision##Real realSample = ((sample + CAST(0.5, precision##Real)) / (DEPTH_MAX(depth) + CAST(0.5, precision##Real)));											\
 																																															\
-							/* If this is an even sample, we want to assign it to the real part of get(funcs[c], sampleIndex/2). Otherwise we want to assign it to the imaginary part.*/	\
-							/* To do this, I get the address of the sampleIndex/2'th sample, cast it to its real float type, and then assign one step ahead if the sample index is odd.*/	\
-							/* This works because complex numbers are represented as two adjacent floats in memory, with the real part being first.*/										\
-							*(CAST(&get(*(funcs##depth[c]), sampleIndex / 2), precision##Real*) + (sampleIndex % 2)) = realSample;															\
+							get(funcs[c], sampleIndex) = realSample;																														\
 						}																																									\
 																																															\
 						sampleIndex++;																																						\
@@ -633,9 +632,9 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 	/* TODO: potential optimization - use something like memset to add the zero padding more efficiently than going one by one.*/															\
 	for (; sampleIndex < paddedLength; sampleIndex++)																																		\
 	{																																														\
-		for (WORD c = 0; c < relevantChannels; c++)																																			\
+		for (unsigned short c = 0; c < relevantChannels; c++)																																\
 		{																																													\
-			*(CAST(&get(*(funcs##depth[c]), sampleIndex / 2), precision##Real *) + (sampleIndex % 2)) = CAST(0.5, precision##Real) / (DEPTH_MAX(depth) + CAST(0.5, precision##Real));		\
+			get(funcs[c], sampleIndex) = CAST(0.5, precision##Real) / (DEPTH_MAX(depth) + CAST(0.5, precision##Real));																		\
 		}																																													\
 	}
 
@@ -659,19 +658,20 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 	}
 
 	// To be efficient with memory while not sacrificing precision, byte depths of 1,2 get converted to single precision floats, and 3,4 get converted to double precision.
+	// Each case is put in a scope to fix issues with having variable-length arrays inside a switch label.
 	switch (byteDepth)
 	{
 		case 1:
-			LOAD_PCM_INTERLEAVED_TYPED(Float, 1)
+			{ LOAD_PCM_INTERLEAVED_TYPED(Float, 1) }
 			break;
 		case 2:
-			LOAD_PCM_INTERLEAVED_TYPED(Float, 2)
+			{ LOAD_PCM_INTERLEAVED_TYPED(Float, 2) }
 			break;
 		case 3:
-			LOAD_PCM_INTERLEAVED_TYPED(Double, 3)
+			{ LOAD_PCM_INTERLEAVED_TYPED(Double, 3) }
 			break;
 		case 4:
-			LOAD_PCM_INTERLEAVED_TYPED(Double, 4)
+			{ LOAD_PCM_INTERLEAVED_TYPED(Double, 4) }
 			break;
 		default: // This case should never happen.
 			fprintf(stderr, "Somehow the byte depth isn't supported.\n");
@@ -687,8 +687,13 @@ char WriteWaveFile(FILE* file, FileInfo* fileInfo, Function** channelsData)
 	// This macro does most of this function's work, and generalizes it for different byte depths. Needs to be declared at the top before it's used.
 	// This function is quite similar to LoadPCMInterleaved, because it essentially inverses it.*/
 	#define WRITE_WAVE_FILE_TYPED(precision, depth)																																\
-	;																																											\
-	Function_##precision##Complex **funcs##depth = (Function_##precision##Complex**)channelsData;																				\
+	Function_##precision##Real funcs[relevantChannels];																															\
+																																												\
+	/* This will make the functions faster and more convenient to read and write to in interleaved form. Useful because we'll be doing that a lot.*/							\
+	for (unsigned short i = 0; i < relevantChannels; i++)																														\
+	{																																											\
+		funcs[i] = ReadComplexFunctionAsReal_##precision##Complex(channelsData[i]);																								\
+	}																																											\
 																																												\
 	/* Writing the data segment by segment.*/																																	\
 	for (DWORD i = 0; i < segmentsLength; i++)																																	\
@@ -714,7 +719,7 @@ char WriteWaveFile(FILE* file, FileInfo* fileInfo, Function** channelsData)
 					for (WORD c = 0; c < relevantChannels; c++)																													\
 					{																																							\
 						/* Taking the float value of the sample which should be roughly in the range [-1, 1].*/																	\
-						precision##Real sample = *(CAST(&get(*(funcs##depth[c]), sampleIndex / 2), precision##Real*) + (sampleIndex % 2));										\
+						precision##Real sample = get(funcs[c], sampleIndex);																									\
 																																												\
 						/* Scaling it up so it matches the range of numbers of the given depth.*/																				\
 						sample = (DEPTH_MAX(depth) * sample) - CAST(0.5, precision##Real);																						\
@@ -763,19 +768,20 @@ char WriteWaveFile(FILE* file, FileInfo* fileInfo, Function** channelsData)
 	}
 
 	// To be efficient with memory while not sacrificing precision, byte depths of 1,2 get converted to single precision floats, and 3,4 get converted to double precision.
+	// Each case is put in a scope to avoid issues with variable-length arrays inside a switch label.
 	switch (byteDepth)
 	{
 		case 1:
-			WRITE_WAVE_FILE_TYPED(Float, 1)
+			{ WRITE_WAVE_FILE_TYPED(Float, 1) }
 			break;
 		case 2:
-			WRITE_WAVE_FILE_TYPED(Float, 2)
+			{ WRITE_WAVE_FILE_TYPED(Float, 2) }
 			break;
 		case 3:
-			WRITE_WAVE_FILE_TYPED(Double, 3)
+			{ WRITE_WAVE_FILE_TYPED(Double, 3) }
 			break;
 		case 4:
-			WRITE_WAVE_FILE_TYPED(Double, 4)
+			{ WRITE_WAVE_FILE_TYPED(Double, 4) }
 			break;
 		default: // This case should never happen.
 			fprintf(stderr, "Somehow the byte depth isn't supported.\n");

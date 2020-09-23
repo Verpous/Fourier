@@ -29,14 +29,14 @@ long long RandLong()
 	return (((long long)rand()) << (sizeof(int) * CHAR_BIT)) | rand();
 }
 
-double RandRangeDouble(double min, double max)
-{
-	return min + ((((unsigned long long)RandLong()) / ((double)ULONG_LONG_MAX)) * (max - min));
-}
-
 float RandRangeFloat(float min, float max)
 {
 	return min + ((((unsigned int)rand()) / ((float)UINT_MAX)) * (max - min));
+}
+
+double RandRangeDouble(double min, double max)
+{
+	return min + ((((unsigned long long)RandLong()) / ((double)ULONG_LONG_MAX)) * (max - min));
 }
 
 float ClampFloat(float val, float min, float max)
@@ -58,6 +58,20 @@ long long DivCeilInt(long long numerator, long long denominator)
 {
 	lldiv_t divResult = lldiv(numerator, denominator);
 	return divResult.quot + (divResult.rem == 0 ? 0 : 1);
+}
+
+float SquareMagnitudeFloatComplex(float complex val)
+{
+	float realPart = creal_FloatComplex(val);
+	float imagPart = cimag_FloatComplex(val);
+	return (realPart * realPart) + (imagPart * imagPart);
+}
+
+double SquareMagnitudeDoubleComplex(double complex val)
+{
+	double realPart = creal_DoubleComplex(val);
+	double imagPart = cimag_DoubleComplex(val);
+	return (realPart * realPart) + (imagPart * imagPart);
 }
 
 void Swap(void* a, void* b, size_t size)
