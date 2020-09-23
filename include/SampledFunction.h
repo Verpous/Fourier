@@ -44,10 +44,10 @@ Function_##type *CreatePartialClone_##type(Function_##type*, unsigned long long,
 void CopySamples_##type(Function_##type, Function_##type, unsigned long long, unsigned long long, unsigned long long);														\
 																																											\
 /* Returns the biggest sample between startIndex (inclusive) and endIndex (exclusive).*/																					\
-type GetMax_##type(Function_##type, unsigned long long, unsigned long long);																								\
+type GetMax_##type(Function_##type, unsigned long long, unsigned long long, unsigned long long);																								\
 																																											\
 /* Returns the smallest sample between startIndex (inclusive) and endIndex (exclusive).*/																					\
-type GetMin_##type(Function_##type, unsigned long long, unsigned long long);
+type GetMin_##type(Function_##type, unsigned long long, unsigned long long, unsigned long long);
 
 #define SAMPLED_FUNCTION_H_PRECISION_CONTENTS(precision)																													\
 /* Creates a real function which reads from the same data as the given complex function, but every complex number is read as two real numbers with adjacent indices.*/		\

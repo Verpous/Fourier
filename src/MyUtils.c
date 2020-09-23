@@ -74,6 +74,16 @@ double SquareMagnitudeDoubleComplex(double complex val)
 	return (realPart * realPart) + (imagPart * imagPart);
 }
 
+float LinearToDecibelFloatReal(float val, float reference)
+{
+	return 10 * log10_FloatReal(val / reference);
+}
+
+double LinearToDecibelDoubleReal(double val, double reference)
+{
+	return 10 * log10_DoubleReal(val / reference);
+}
+
 void Swap(void* a, void* b, size_t size)
 {
 	char temp[size];

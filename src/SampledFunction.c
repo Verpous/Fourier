@@ -96,11 +96,11 @@ void CopySamples_##type(Function_##type dest, Function_##type src, unsigned long
 
 // TODO: potential optimization - use internal knowledge about how functions work to read from them for min and max more efficiently.*/
 #define SAMPLED_FUNCTION_C_PRECISION_CONTENTS(precision)																									\
-precision##Real GetMax_##precision##Real(Function_##precision##Real f, unsigned long long startIndex, unsigned long long endIndex)							\
+precision##Real GetMax_##precision##Real(Function_##precision##Real f, unsigned long long startIndex, unsigned long long endIndex, unsigned long long s)							\
 {																																							\
 	precision##Real max = -INFINITY;																														\
 																																							\
-	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	for (unsigned long long i = startIndex; i < endIndex; i+=s)																								\
 	{																																						\
 		precision##Real sample = get(f, i);																													\
 																																							\
@@ -113,11 +113,11 @@ precision##Real GetMax_##precision##Real(Function_##precision##Real f, unsigned 
 	return max;																																				\
 }																																							\
 																																							\
-precision##Real GetMin_##precision##Real(Function_##precision##Real f, unsigned long long startIndex, unsigned long long endIndex)							\
+precision##Real GetMin_##precision##Real(Function_##precision##Real f, unsigned long long startIndex, unsigned long long endIndex, unsigned long long s)							\
 {																																							\
 	precision##Real min = INFINITY;																															\
 																																							\
-	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	for (unsigned long long i = startIndex; i < endIndex; i+=s)																								\
 	{																																						\
 		precision##Real sample = get(f, i);																													\
 																																							\
@@ -130,12 +130,12 @@ precision##Real GetMin_##precision##Real(Function_##precision##Real f, unsigned 
 	return min;																																				\
 }																																							\
 																																							\
-precision##Complex GetMax_##precision##Complex(Function_##precision##Complex f, unsigned long long startIndex, unsigned long long endIndex)					\
+precision##Complex GetMax_##precision##Complex(Function_##precision##Complex f, unsigned long long startIndex, unsigned long long endIndex, unsigned long long s)					\
 {																																							\
 	precision##Real maxSqrMagnitude = -INFINITY;																											\
 	precision##Complex maxSample = NAN;																														\
 																																							\
-	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	for (unsigned long long i = startIndex; i < endIndex; i+=s)																								\
 	{																																						\
 		precision##Complex sample = get(f, i);																												\
 		precision##Real sqrMag = SquareMagnitude##precision##Complex(sample);																				\
@@ -150,12 +150,12 @@ precision##Complex GetMax_##precision##Complex(Function_##precision##Complex f, 
 	return maxSample;																																		\
 }																																							\
 																																							\
-precision##Complex GetMin_##precision##Complex(Function_##precision##Complex f, unsigned long long startIndex, unsigned long long endIndex)					\
+precision##Complex GetMin_##precision##Complex(Function_##precision##Complex f, unsigned long long startIndex, unsigned long long endIndex, unsigned long long s)					\
 {																																							\
 	precision##Real minSqrMagnitude = INFINITY;																												\
 	precision##Complex minSample = NAN;																														\
 																																							\
-	for (unsigned long long i = startIndex; i < endIndex; i++)																								\
+	for (unsigned long long i = startIndex; i < endIndex; i+=s)																								\
 	{																																						\
 		precision##Complex sample = get(f, i);																												\
 		precision##Real sqrMag = SquareMagnitude##precision##Complex(sample);																				\

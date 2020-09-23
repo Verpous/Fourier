@@ -1,8 +1,9 @@
 #ifndef MY_UTILS_H
 #define MY_UTILS_H
 
-#include <windows.h> // For some winapi types.
-#include <complex.h> // For dealing with complex numbers.
+#include <windows.h>	// For some winapi types.
+#include <complex.h>	// For dealing with complex numbers.
+#include <math.h>		// For functions like log10.
 
 #define KILO (1 << 10)
 #define MEGA (1 << 20)
@@ -55,11 +56,14 @@
 #define floor_FloatReal(x) floorf(x)
 #define floor_DoubleReal(x) floor(x)
 
-#define abs_FloatReal(f) fabsf(f)
-#define abs_DoubleReal(f) fabs(f)
+#define abs_FloatReal(x) fabsf(x)
+#define abs_DoubleReal(x) fabs(x)
 
-#define lround_FloatReal(f) lroundf(f)
-#define lround_DoubleReal(f) lround(f)
+#define lround_FloatReal(x) lroundf(x)
+#define lround_DoubleReal(x) lround(x)
+
+#define log10_FloatReal(x) log10f(x)
+#define log10_DoubleReal(x) log10(x)
 
 // TODO: declare any of these that make sense as inline.
 
@@ -89,6 +93,12 @@ float SquareMagnitudeFloatComplex(float complex);
 
 // Returns the square magnitude of a double-precision float complex.
 double SquareMagnitudeDoubleComplex(double complex);
+
+// Converts a linear single-precision float value to decibel units based on a reference point.
+float LinearToDecibelFloatReal(float, float);
+
+// Converts a linear double-precision float value to decibel units based on a reference point.
+double LinearToDecibelDoubleReal(double, double);
 
 // Returns the division with ceiling of two integers.
 long long DivCeilInt(long long, long long);

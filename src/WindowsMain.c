@@ -67,6 +67,7 @@
 // Graphing constants. Sizes are in pixels.
 #define GRAPH_WIDTH 750
 #define GRAPH_HEIGHT 155 // This should be an odd number because we divide (GRAPH_HEIGHT - 1) by 2 and so there's as many pixels above 0 as below.
+#define FOURIER_DECIBEL_REFERENCE 5.0 // Decibel is a unit which requires a reference point to measure against. This is that for the logarithm scale of fourier graphs.
 
 // WindowClass names.
 #define WC_MAINWINDOW TEXT("MainWindow")
@@ -140,6 +141,7 @@ char RegisterMainWindowClass(HINSTANCE instanceHandle)
 	mainWindowClass.hInstance = instanceHandle;
 	mainWindowClass.lpszClassName = WC_MAINWINDOW;
 	mainWindowClass.lpfnWndProc = MainWindowProcedure;
+	mainWindowClass.hIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
 
 	// Registering this class. If it fails, we'll log it and end the program.
 	if (!RegisterClass(&mainWindowClass))
@@ -944,8 +946,8 @@ void PlotChannelWaveform(unsigned short channel)
 		unsigned long long endSample = ClampInt(ceil_DoubleReal(stepSize * (i + 1)), 0, length);																\
 																																								\
 		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
-		precision##Real min = GetMin_##precision##Real(func, startSample, endSample);																			\
-		precision##Real max = GetMax_##precision##Real(func, startSample, endSample);																			\
+		precision##Real min = GetMin_##precision##Real(func, startSample, endSample, 3);																			\
+		precision##Real max = GetMax_##precision##Real(func, startSample, endSample, 3);																			\
 																																								\
 		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
 		unsigned int minYCoord = ClampInt(halfHeight - (halfHeight * min), 0, GRAPH_HEIGHT - 1);																\
@@ -991,11 +993,16 @@ void PlotChannelWaveform(unsigned short channel)
 
 void PlotChannelFourier(unsigned short channel)
 {	
+	// TODO: Investigate different step sizes for min and max further and performances and determine the best course of action.
 	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
 	#define PLOT_CHANNEL_FOURIER_TYPED(precision)																												\
 	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);													\
-	precision##Real totalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length));															\
-	precision##Real yMappingSlope = (GRAPH_HEIGHT - 1) / totalMax; /* Slope of the linear function which maps samples to y pixels.*/							\
+																																								\
+	/* We'll be plotting the graph such that the highest pixel represents the global maximum point.*/															\
+	precision##Real globalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length, 3)); 													\
+	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE); /* Converting to logarithmic scale.*/									\
+	globalMax += CAST(1.5, precision##Real); /* Adding a little so the graph's peak isn't exactly on the last pixel.*/											\
+	precision##Real yMappingSlope = (GRAPH_HEIGHT - 1) / globalMax; /* Slope of the linear function which maps samples to y pixels.*/							\
 																																								\
 	/* For every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/						\
 	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																												\
@@ -1005,10 +1012,11 @@ void PlotChannelFourier(unsigned short channel)
 		unsigned long long endSample = ClampInt(ceil_DoubleReal(stepSize * (i + 1)), 0, length);																\
 																																								\
 		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
-		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample));												\
+		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, 3));											\
+		max = LinearToDecibel##precision##Real(max, FOURIER_DECIBEL_REFERENCE); /* Converting to logarithmic scale.*/											\
 																																								\
 		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
-		unsigned int yCoord = (GRAPH_HEIGHT - 1) - (yMappingSlope * max);																						\
+		unsigned int yCoord = ClampInt((GRAPH_HEIGHT - 1) - (yMappingSlope * max), 0, GRAPH_HEIGHT - 1);														\
 		MoveToEx(fileEditor.graphingDC, i, GRAPH_HEIGHT - 1, NULL);																								\
 		LineTo(fileEditor.graphingDC, i, yCoord + 1);																											\
 	}
