@@ -16,7 +16,7 @@
 
 #include "SampledFunction.h"
 #include "MyUtils.h"
-#include <math.h> // for min.
+#include <math.h> // for min, log, etc.
 
 // Important to use a power of two here.
 #define MAX_SEGMENT_LEN MEGAS(16)

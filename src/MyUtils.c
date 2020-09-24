@@ -18,6 +18,7 @@
 #include <stdlib.h> // For memcpy, rand, etc.
 #include <limits.h> // For CHAR_BIT and max unsigned long long.
 #include <tchar.h>	// For dealing with ansi and unicode strings.
+#include <math.h>	// For functions like log10.
 
 int RandRange(int min, int max)
 {
@@ -62,26 +63,26 @@ long long DivCeilInt(long long numerator, long long denominator)
 
 float SquareMagnitudeFloatComplex(float complex val)
 {
-	float realPart = creal_FloatComplex(val);
-	float imagPart = cimag_FloatComplex(val);
+	float realPart = crealf(val);
+	float imagPart = cimagf(val);
 	return (realPart * realPart) + (imagPart * imagPart);
 }
 
 double SquareMagnitudeDoubleComplex(double complex val)
 {
-	double realPart = creal_DoubleComplex(val);
-	double imagPart = cimag_DoubleComplex(val);
+	double realPart = creal(val);
+	double imagPart = cimag(val);
 	return (realPart * realPart) + (imagPart * imagPart);
 }
 
 float LinearToDecibelFloatReal(float val, float reference)
 {
-	return 10 * log10_FloatReal(val / reference);
+	return 10 * log10f(val / reference);
 }
 
 double LinearToDecibelDoubleReal(double val, double reference)
 {
-	return 10 * log10_DoubleReal(val / reference);
+	return 10 * log10(val / reference);
 }
 
 void Swap(void* a, void* b, size_t size)

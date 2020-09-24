@@ -36,17 +36,20 @@ typedef struct FileEditor
 	Modification* currentSaveState;		// The last change that was saved.
 
 	// The following fields are just handles to some important windows of the file editor.
-	HWND channelTabs;
-	HWND waveformGraphStatic;
-	HWND fourierGraphStatic;
-	HWND fromFreqTextbox;
-	HWND toFreqTextbox;
-	HWND changeTypeDropdown;
-	HWND changeAmountTextbox;
-	HWND smoothingTrackbar;
-	HWND smoothingTextbox;
-	HWND undoButton;
-	HWND redoButton;
+	HWND channelTabs;					// The tab control that lets you switch between channels.
+	HWND waveformGraphStatic;			// The static which contains the waveform graph bitmap.
+	HWND fourierGraphStatic;			// The static which contains the fourier transform graph bitmap.
+	HWND fourierMaxStatic;				// The static which contains the decibel value at the highest point on the fourier transform graph.
+	HWND minFreqStatic;					// The static which contains the lowest frequency. This is always 0Hz, but the units can vary.
+	HWND maxFreqStatic;					// The static which contains the highest frequency, which is the nyquist frequency.
+	HWND fromFreqTextbox;				// The textbox for inputting the frequency to edit from.
+	HWND toFreqTextbox;					// The textbox for inputting the frequency to edit to.
+	HWND changeTypeDropdown;			// The dropdown for selecting whether to apply a multiplicative, additive, or subtractive change.
+	HWND changeAmountTextbox;			// The textbox for inputting the amount to multiply, add, or subtract.
+	HWND smoothingTrackbar;				// The trackbar inputting the amount of smoothing to apply to the change.
+	HWND smoothingTextbox;				// The textbox inputting the amount of smoothing to apply to the change (goes with the trackbar).
+	HWND undoButton;					// The button for undoing changes.
+	HWND redoButton;					// The button for redoing changes.
 } FileEditor;
 
 // Registers classes and creates the main window.

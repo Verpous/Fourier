@@ -2,6 +2,7 @@
 #define SAMPLED_FUNCTION_H
 
 #include <complex.h>
+#include <float.h>
 
 typedef enum
 {
@@ -20,6 +21,46 @@ typedef float FloatReal;
 
 // Gets a function f and an index i and returns the i'th sample of f.
 #define get(f, i) ((f).samples[(i) / (f).segmentLen][(i) % (f).segmentLen])
+
+// Macros that rename float functions for different precisions.
+#define cexp_FloatComplex(x) cexpf(x)
+#define cexp_DoubleComplex(x) cexp(x)
+
+#define conj_FloatComplex(x) conjf(x)
+#define conj_DoubleComplex(x) conj(x)
+
+#define carg_FloatComplex(x) cargf(x)
+#define carg_DoubleComplex(x) carg(x)
+
+#define cabs_FloatComplex(x) cabsf(x)
+#define cabs_DoubleComplex(x) cabs(x)
+
+#define creal_FloatComplex(x) crealf(x)
+#define creal_DoubleComplex(x) creal(x)
+
+#define cimag_FloatComplex(x) cimagf(x)
+#define cimag_DoubleComplex(x) cimag(x)
+
+#define cos_FloatReal(x) cosf(x)
+#define cos_DoubleReal(x) cos(x)
+
+#define ceil_FloatReal(x) ceilf(x)
+#define ceil_DoubleReal(x) ceil(x)
+
+#define floor_FloatReal(x) floorf(x)
+#define floor_DoubleReal(x) floor(x)
+
+#define abs_FloatReal(x) fabsf(x)
+#define abs_DoubleReal(x) fabs(x)
+
+#define lround_FloatReal(x) lroundf(x)
+#define lround_DoubleReal(x) lround(x)
+
+#define log10_FloatReal(x) log10f(x)
+#define log10_DoubleReal(x) log10(x)
+
+#define MAX_FloatReal __FLT_MAX__
+#define MAX_DoubleReal __DBL_MAX__
 
 #define SAMPLED_FUNCTION_H_TYPED_CONTENTS(type)																																\
 typedef struct Function_##type																																				\
@@ -44,7 +85,7 @@ Function_##type *CreatePartialClone_##type(Function_##type*, unsigned long long,
 void CopySamples_##type(Function_##type, Function_##type, unsigned long long, unsigned long long, unsigned long long);														\
 																																											\
 /* Returns the biggest sample between startIndex (inclusive) and endIndex (exclusive).*/																					\
-type GetMax_##type(Function_##type, unsigned long long, unsigned long long, unsigned long long);																								\
+type GetMax_##type(Function_##type, unsigned long long, unsigned long long, unsigned long long);																			\
 																																											\
 /* Returns the smallest sample between startIndex (inclusive) and endIndex (exclusive).*/																					\
 type GetMin_##type(Function_##type, unsigned long long, unsigned long long, unsigned long long);

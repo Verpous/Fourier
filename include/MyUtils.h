@@ -3,7 +3,6 @@
 
 #include <windows.h>	// For some winapi types.
 #include <complex.h>	// For dealing with complex numbers.
-#include <math.h>		// For functions like log10.
 
 #define KILO (1 << 10)
 #define MEGA (1 << 20)
@@ -27,43 +26,6 @@
 
 // Like XStringify, but the string is unicode if we're targeting unicode.
 #define TXStringify(x) TEXT(XStringify(x))
-
-// Macros that rename float functions for different precisions.
-#define cexp_FloatComplex(x) cexpf(x)
-#define cexp_DoubleComplex(x) cexp(x)
-
-#define conj_FloatComplex(x) conjf(x)
-#define conj_DoubleComplex(x) conj(x)
-
-#define carg_FloatComplex(x) cargf(x)
-#define carg_DoubleComplex(x) carg(x)
-
-#define cabs_FloatComplex(x) cabsf(x)
-#define cabs_DoubleComplex(x) cabs(x)
-
-#define creal_FloatComplex(x) crealf(x)
-#define creal_DoubleComplex(x) creal(x)
-
-#define cimag_FloatComplex(x) cimagf(x)
-#define cimag_DoubleComplex(x) cimag(x)
-
-#define cos_FloatReal(x) cosf(x)
-#define cos_DoubleReal(x) cos(x)
-
-#define ceil_FloatReal(x) ceilf(x)
-#define ceil_DoubleReal(x) ceil(x)
-
-#define floor_FloatReal(x) floorf(x)
-#define floor_DoubleReal(x) floor(x)
-
-#define abs_FloatReal(x) fabsf(x)
-#define abs_DoubleReal(x) fabs(x)
-
-#define lround_FloatReal(x) lroundf(x)
-#define lround_DoubleReal(x) lround(x)
-
-#define log10_FloatReal(x) log10f(x)
-#define log10_DoubleReal(x) log10(x)
 
 // TODO: declare any of these that make sense as inline.
 

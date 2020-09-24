@@ -64,10 +64,46 @@
 // How many ticks we want to have in a trackbar.
 #define TRACKBAR_TICKS 11
 
-// Graphing constants. Sizes are in pixels.
-#define GRAPH_WIDTH 750
-#define GRAPH_HEIGHT 155 // This should be an odd number because we divide (GRAPH_HEIGHT - 1) by 2 and so there's as many pixels above 0 as below.
-#define FOURIER_DECIBEL_REFERENCE 5.0 // Decibel is a unit which requires a reference point to measure against. This is that for the logarithm scale of fourier graphs.
+// Dimensions of windows. Everything is in pixels.
+#define MAIN_WINDOW_WIDTH 1152 // Used to be 850
+#define MAIN_WINDOW_HEIGHT 864 // Used to be 700
+#define NEW_FILE_OPTIONS_WIDTH 380
+#define NEW_FILE_OPTIONS_HEIGHT 220
+#define SELECT_FILE_OPTION_WIDTH 330
+#define SELECT_FILE_OPTION_HEIGHT 120
+
+// Dimensions of controls. Everything is in pixels.
+#define INPUT_TEXTBOX_WIDTH 90
+#define INPUT_TEXTBOX_HEIGHT 22
+#define STATIC_TEXT_HEIGHT 16
+#define STATIC_UNITS_WIDTH 50
+#define TRACKBAR_WIDTH (INPUT_TEXTBOX_WIDTH + UNITS_AFTER_TEXTBOX_SPACING + STATIC_UNITS_WIDTH + CONTROL_DESCRIPTION_WIDTH) // This value ensures that the smoothing trackbar has the right alignment with other controls.
+#define TRACKBAR_HEIGHT 30
+#define BUTTON_WIDTH 70
+#define BUTTON_HEIGHT 35
+#define RADIO_WIDTH 94
+#define GRAPH_WIDTH (MAIN_WINDOW_WIDTH - 130) // We want the graph to take up as much as it can of the screen while still looking good.
+#define GRAPH_HEIGHT 235 // This should be an odd number because we divide (GRAPH_HEIGHT - 1) by 2 and so there's as many pixels above 0 as below.
+#define CONTROL_DESCRIPTION_WIDTH 80
+
+// Some positions that are used as baselines from which all other positions of their respective menus are derived.
+// File editor.
+#define WAVEFORM_GRAPH_Y_POS 70
+
+// New file options.
+#define CHOOSE_FILE_LENGTH_X_POS 10
+#define CHOOSE_FILE_LENGTH_Y_POS 15
+
+// Some pixel distances and spacings.
+#define INPUTS_Y_SPACING 50
+#define UNITS_AFTER_TEXTBOX_SPACING 5
+#define GENERIC_SPACING 10 // We use this to distance some things.
+
+// Decibel is a unit which requires a reference point to measure against. This is that for the logarithm scale of fourier graphs.
+#define FOURIER_DECIBEL_REFERENCE 5.0
+
+// How many characters are allowed in input controls for numbers (which is all of them).
+#define INPUT_TEXTBOX_CHARACTER_LIMIT 8
 
 // WindowClass names.
 #define WC_MAINWINDOW TEXT("MainWindow")
@@ -124,7 +160,9 @@ char InitializeWindows(HINSTANCE instanceHandle)
 
 	// Creates main window.
 	// WS_CLIPSIBLINGS makes child windows not draw over each other.
-	mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled") TITLE_POSTFIX, WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS, 600, 250, 850, 700, NULL, NULL, NULL, NULL);
+	// TODO: get screen dimensions and spawn window in position such that it's at the center of the screen? If I do, I should also adjust popselectfileoption to spawn in the center.
+	mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled") TITLE_POSTFIX, WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS,
+		600, 250, MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT, NULL, NULL, NULL, NULL);
 	return TRUE;
 }
 
@@ -292,7 +330,8 @@ void AddMainWindowMenus(HWND windowHandle)
 
 void PopSelectFileOptionDialog(HWND windowHandle)
 {
-	CreateWindow(WC_SELECTFILEOPTION, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU, 700, 450, 330, 120, windowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_SELECTFILEOPTION, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU,
+		575 + ((MAIN_WINDOW_WIDTH - SELECT_FILE_OPTION_WIDTH) / 2), 200 + ((MAIN_WINDOW_HEIGHT - SELECT_FILE_OPTION_HEIGHT) / 2), SELECT_FILE_OPTION_WIDTH, SELECT_FILE_OPTION_HEIGHT, windowHandle, NULL, NULL, NULL);
 	EnableWindow(windowHandle, FALSE);
 }
 
@@ -374,7 +413,7 @@ void FileNew(HWND windowHandle)
 
 	newFileOptionsHandles = calloc(1, sizeof(NewFileOptionsWindow));
 	newFileOptionsHandles->handle = CreateWindow(WC_NEWFILEOPTIONS, TEXT("New File Options - Fourier"),
-												 WS_VISIBLE | WS_OVERLAPPED | WS_SYSMENU, 800, 500, 362, 212, windowHandle, NULL, NULL, NULL);
+												 WS_VISIBLE | WS_OVERLAPPED | WS_SYSMENU, 950, 550, NEW_FILE_OPTIONS_WIDTH, NEW_FILE_OPTIONS_HEIGHT, windowHandle, NULL, NULL, NULL);
 	newFileOptionsHandles->parent = windowHandle;
 	EnableWindow(windowHandle, FALSE); // Disabling the parent because this is a modal window.
 }
@@ -798,53 +837,122 @@ void PaintFileEditor()
 
 void PaintFileEditorPermanents()
 {
-	fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, 835, 647, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, MAIN_WINDOW_WIDTH - 15, MAIN_WINDOW_HEIGHT - 53, mainWindowHandle, NULL, NULL, NULL);
 
 	// Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
-	CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, 825, 613, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, MAIN_WINDOW_WIDTH - 25, MAIN_WINDOW_HEIGHT - 87, mainWindowHandle, NULL, NULL, NULL);
 
-	// Adding static controls that will contain the bitmaps of the different graphs.
-	fileEditor.waveformGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, 50, 60, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, 50, 100 + GRAPH_HEIGHT, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+	// Adding static controls that for graphing, including the one which will contain the bitmap of the graph later.
+	// First, waveforms.
+	unsigned int graphXPos = (MAIN_WINDOW_WIDTH - GRAPH_WIDTH) / 2; // This makes it so there's even spacing on both sides of the graph.
+	unsigned int unitsXPos = graphXPos - STATIC_UNITS_WIDTH - 2;
+	unsigned int waveformUnitsYBasePos = WAVEFORM_GRAPH_Y_POS - (STATIC_TEXT_HEIGHT / 2);
+
+	CreateWindow(WC_STATIC, TEXT("Waveform:"), WS_CHILD | WS_VISIBLE,
+		graphXPos, WAVEFORM_GRAPH_Y_POS - STATIC_TEXT_HEIGHT - 8, 200, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	CreateWindow(WC_STATIC, TEXT("1"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
+		unitsXPos, waveformUnitsYBasePos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	CreateWindow(WC_STATIC, TEXT("0"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
+		unitsXPos, waveformUnitsYBasePos + (GRAPH_HEIGHT / 2), STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	CreateWindow(WC_STATIC, TEXT("-1"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
+		unitsXPos, waveformUnitsYBasePos + GRAPH_HEIGHT, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.waveformGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP,
+		graphXPos, WAVEFORM_GRAPH_Y_POS, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	// Now doing fourier transforms.
+	unsigned int fourierGraphYPos = WAVEFORM_GRAPH_Y_POS + GRAPH_HEIGHT + INPUTS_Y_SPACING;
+	unsigned int fourierDecibelUnitsBaseYPos = fourierGraphYPos - (STATIC_TEXT_HEIGHT / 2);
+	unsigned int fourierFrequencyUnitsYPos = fourierGraphYPos + GRAPH_HEIGHT + (STATIC_TEXT_HEIGHT / 2);
+
+	CreateWindow(WC_STATIC, TEXT("Frequency spectrum:"), WS_CHILD | WS_VISIBLE,
+		graphXPos, fourierGraphYPos - STATIC_TEXT_HEIGHT - 8, 200, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	CreateWindow(WC_STATIC, TEXT("0dB"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
+		unitsXPos, fourierDecibelUnitsBaseYPos + GRAPH_HEIGHT, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.fourierMaxStatic = CreateWindow(WC_STATIC, TEXT("90dB"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
+		unitsXPos,fourierDecibelUnitsBaseYPos, STATIC_UNITS_WIDTH, 27, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.minFreqStatic = CreateWindow(WC_STATIC, TEXT("0KHz"), WS_CHILD | WS_VISIBLE | SS_CENTER,
+		graphXPos - (STATIC_UNITS_WIDTH / 2), fourierFrequencyUnitsYPos, STATIC_UNITS_WIDTH, STATIC_UNITS_WIDTH, mainWindowHandle, NULL, NULL, NULL); // TODO: May want to only allow editing starting from 1Hz because 0 is special. Maybe it should say 0 here anyway though.
+
+	fileEditor.maxFreqStatic = CreateWindow(WC_STATIC, TEXT("20KHz"), WS_CHILD | WS_VISIBLE | SS_CENTER,
+		graphXPos - (STATIC_UNITS_WIDTH / 2) + GRAPH_WIDTH, fourierFrequencyUnitsYPos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL); // TODO: change units to Hz when sample rate is below a threshold.
+
+	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, graphXPos, fourierGraphYPos, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	// Adding GUI for choosing what frequency to modify.
-	CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD, 50, 450, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 130, 448, 65, 22, mainWindowHandle, NULL, NULL, NULL);
-	SetWindowSubclass(fileEditor.fromFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
-	SendMessage(fileEditor.fromFreqTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0);		 // Setting character limit.
-	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 200, 450, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+	unsigned int chooseFrequenciesYPos = fourierGraphYPos + GRAPH_HEIGHT + INPUTS_Y_SPACING;
 
-	CreateWindow(WC_STATIC, TEXT("To:"), WS_VISIBLE | WS_CHILD, 270, 450, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 448, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD,
+		graphXPos, chooseFrequenciesYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER,
+		graphXPos + CONTROL_DESCRIPTION_WIDTH, chooseFrequenciesYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+	SetWindowSubclass(fileEditor.fromFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
+	SendMessage(fileEditor.fromFreqTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
+
+	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD,
+		graphXPos + CONTROL_DESCRIPTION_WIDTH + INPUT_TEXTBOX_WIDTH + UNITS_AFTER_TEXTBOX_SPACING, chooseFrequenciesYPos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	unsigned int toFrequencyBaseXPos =  graphXPos + CONTROL_DESCRIPTION_WIDTH + INPUT_TEXTBOX_WIDTH + UNITS_AFTER_TEXTBOX_SPACING + STATIC_UNITS_WIDTH + GENERIC_SPACING;
+
+	CreateWindow(WC_STATIC, TEXT("To:"), WS_VISIBLE | WS_CHILD,
+		toFrequencyBaseXPos, chooseFrequenciesYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER,
+		toFrequencyBaseXPos + CONTROL_DESCRIPTION_WIDTH, chooseFrequenciesYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.toFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
-	SendMessage(fileEditor.toFreqTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0);	   // Setting character limit.
-	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, 410, 450, 60, 22, mainWindowHandle, NULL, NULL, NULL);
+	SendMessage(fileEditor.toFreqTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
+
+	CreateWindow(WC_STATIC, TEXT("Hz"), WS_VISIBLE | WS_CHILD, toFrequencyBaseXPos + CONTROL_DESCRIPTION_WIDTH + INPUT_TEXTBOX_WIDTH + UNITS_AFTER_TEXTBOX_SPACING,
+		chooseFrequenciesYPos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	// Adding GUI for choosing what change to apply.
 	// Adding a dropdown for choosing the change type.
-	CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD, 50, 495, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS, 130, 490, 90, 100, mainWindowHandle, NULL, NULL, NULL);
+	unsigned int chooseChangeYPos = chooseFrequenciesYPos + INPUTS_Y_SPACING;
+
+	CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD,
+		graphXPos, chooseChangeYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS,
+		graphXPos + CONTROL_DESCRIPTION_WIDTH, chooseChangeYPos - 5, INPUT_TEXTBOX_WIDTH, 100, mainWindowHandle, NULL, NULL, NULL);
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Multiply"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Add"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Subtract"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0); // Setting "multiply" as the default selection.
 
 	// Adding a textbox for choosing the change amount.
-	CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD, 270, 495, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT("0.000"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 340, 493, 65, 22, mainWindowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD,
+		toFrequencyBaseXPos, chooseChangeYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT("0.000"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 
+		toFrequencyBaseXPos + CONTROL_DESCRIPTION_WIDTH, chooseChangeYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.changeAmountTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
-	SendMessage(fileEditor.changeAmountTextbox, EM_SETLIMITTEXT, (WPARAM)6, 0);		 // Setting character limit.
+	SendMessage(fileEditor.changeAmountTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
 
 	// Adding GUI for choosing how much smoothing to apply.
-	CreateWindow(WC_STATIC, TEXT("Smoothing:"), WS_VISIBLE | WS_CHILD, 50, 540, 80, 22, mainWindowHandle, NULL, NULL, NULL);
-	AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), 130, 540,
-						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.") TXStringify(DEFAULT_SMOOTHING), NULL, FALSE);
+	unsigned int chooseSmoothingYPos = chooseChangeYPos + INPUTS_Y_SPACING;
 
-	// Adding buttons for ok and cancel.
-	// TODO: I'm considering moving these buttons to the center of the screen (horizontally).
-	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 595, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_ACTION_UNDO, NULL, NULL);
-	fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED, 675, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_ACTION_REDO, NULL, NULL);
-	CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 755, 598, 70, 35, mainWindowHandle, (HMENU)EDIT_ACTION_APPLY, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Smoothing:"), WS_VISIBLE | WS_CHILD,
+		graphXPos, chooseSmoothingYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), graphXPos + CONTROL_DESCRIPTION_WIDTH, chooseSmoothingYPos,
+						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.") TXStringify(DEFAULT_SMOOTHING), NULL, FALSE); // TODO: change default to 1 (I think)
+
+	// Adding buttons for undo, redo, apply.
+	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED,
+		graphXPos + GRAPH_WIDTH - BUTTON_WIDTH, chooseFrequenciesYPos, BUTTON_WIDTH, BUTTON_HEIGHT, mainWindowHandle, (HMENU)EDIT_ACTION_UNDO, NULL, NULL);
+
+	fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED,
+		graphXPos + GRAPH_WIDTH - BUTTON_WIDTH, chooseFrequenciesYPos + BUTTON_HEIGHT + GENERIC_SPACING, BUTTON_WIDTH, BUTTON_HEIGHT, mainWindowHandle, (HMENU)EDIT_ACTION_REDO, NULL, NULL);
+
+	CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+		graphXPos + GRAPH_WIDTH - BUTTON_WIDTH, chooseFrequenciesYPos + 2 * (BUTTON_HEIGHT + GENERIC_SPACING), BUTTON_WIDTH, BUTTON_HEIGHT, mainWindowHandle, (HMENU)EDIT_ACTION_APPLY, NULL, NULL);
 
 	// Un-graying menu options that will always be usable from now on.
 	HMENU mainMenu = GetMenu(mainWindowHandle);
@@ -1000,9 +1108,15 @@ void PlotChannelFourier(unsigned short channel)
 																																								\
 	/* We'll be plotting the graph such that the highest pixel represents the global maximum point.*/															\
 	precision##Real globalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length, 3)); 													\
-	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE); /* Converting to logarithmic scale.*/									\
-	globalMax += CAST(1.5, precision##Real); /* Adding a little so the graph's peak isn't exactly on the last pixel.*/											\
-	precision##Real yMappingSlope = (GRAPH_HEIGHT - 1) / globalMax; /* Slope of the linear function which maps samples to y pixels.*/							\
+																																								\
+	/* Clamping the value so it isn't smaller than the decibel reference, which is the smallest number that we plot while globalMax is the highest.*/			\
+	globalMax = Clamp##precision(globalMax, FOURIER_DECIBEL_REFERENCE, MAX_##precision##Real);																	\
+																																								\
+	/* Converting to logarithmic scale, and add a little so the graph peak isn't exactly on the last pixel.*/													\
+	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE) + CAST(1.5, precision##Real); 											\
+																																								\
+	/* This is the slope of the linear function which maps decibels to y pixels.*/																				\
+	precision##Real yMappingSlope = GRAPH_HEIGHT / globalMax; 																									\
 																																								\
 	/* For every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/						\
 	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																												\
@@ -1013,12 +1127,14 @@ void PlotChannelFourier(unsigned short channel)
 																																								\
 		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
 		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, 3));											\
-		max = LinearToDecibel##precision##Real(max, FOURIER_DECIBEL_REFERENCE); /* Converting to logarithmic scale.*/											\
+																																								\
+		/* Converting to logarithmic scale. Had a bug with the integer conversion when this returns -INF, so I only proceed if max is above the reference.*/	\
+		max = max < FOURIER_DECIBEL_REFERENCE ? 0.0 : LinearToDecibel##precision##Real(max, FOURIER_DECIBEL_REFERENCE); 										\
 																																								\
 		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
-		unsigned int yCoord = ClampInt((GRAPH_HEIGHT - 1) - (yMappingSlope * max), 0, GRAPH_HEIGHT - 1);														\
+		unsigned int yCoord = ClampInt((GRAPH_HEIGHT - 1) - (yMappingSlope * max), -1, GRAPH_HEIGHT - 1);														\
 		MoveToEx(fileEditor.graphingDC, i, GRAPH_HEIGHT - 1, NULL);																								\
-		LineTo(fileEditor.graphingDC, i, yCoord + 1);																											\
+		LineTo(fileEditor.graphingDC, i, yCoord);																												\
 	}
 
 	SetChannelDomain(channel, FREQUENCY_DOMAIN);
@@ -1287,23 +1403,40 @@ LRESULT CALLBACK NewFileOptionsProcedure(HWND windowHandle, UINT msg, WPARAM wpa
 void PaintNewFileOptionsWindow(HWND windowHandle)
 {
 	// Adding trackbar-textbox-units triple for selecting file length.
-	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox), 10, 16,
-						   FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_LENGTH), TEXT("seconds"), TRUE);
+	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox), CHOOSE_FILE_LENGTH_X_POS, CHOOSE_FILE_LENGTH_Y_POS,
+						   FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_LENGTH), TEXT("sec"), TRUE);
 
 	// Adding trackbar-textbox-units triple for selecting file sample rate.
-	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox), 10, 61,
+	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox), CHOOSE_FILE_LENGTH_X_POS, CHOOSE_FILE_LENGTH_Y_POS + INPUTS_Y_SPACING,
 						   FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_FREQUENCY), TEXT("Hz"), TRUE);
 
 	// Adding a radio menu for choosing bit depth. Important that we add these such that the i'th cell indicates i+1 bytes.
-	newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP, 18, 95, 80, 30, windowHandle, NULL, NULL, NULL);
-	newFileOptionsHandles->depthOptions[1] = CreateWindow(WC_BUTTON, TEXT("16-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 98, 95, 80, 30, windowHandle, NULL, NULL, NULL);
-	newFileOptionsHandles->depthOptions[2] = CreateWindow(WC_BUTTON, TEXT("24-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 178, 95, 80, 30, windowHandle, NULL, NULL, NULL);
-	newFileOptionsHandles->depthOptions[3] = CreateWindow(WC_BUTTON, TEXT("32-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER, 258, 95, 80, 30, windowHandle, NULL, NULL, NULL);
+	unsigned int baseRadiosXPos = CHOOSE_FILE_LENGTH_X_POS + 8;
+	unsigned int radiosYPos = CHOOSE_FILE_LENGTH_Y_POS + (2 * INPUTS_Y_SPACING);
+
+	newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP,
+		baseRadiosXPos, radiosYPos, RADIO_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
+
+	newFileOptionsHandles->depthOptions[1] = CreateWindow(WC_BUTTON, TEXT("16-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER,
+		baseRadiosXPos + RADIO_WIDTH, radiosYPos, RADIO_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
+
+	newFileOptionsHandles->depthOptions[2] = CreateWindow(WC_BUTTON, TEXT("24-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER,
+		baseRadiosXPos + (2 * RADIO_WIDTH), radiosYPos, RADIO_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
+
+	newFileOptionsHandles->depthOptions[3] = CreateWindow(WC_BUTTON, TEXT("32-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER,
+		baseRadiosXPos + (3 * RADIO_WIDTH), radiosYPos, RADIO_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
+
 	SendMessage(newFileOptionsHandles->depthOptions[1], BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
 
 	// Adding buttons for ok and cancel.
-	CreateWindow(WC_BUTTON, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 198, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_CANCEL, NULL, NULL);
-	CreateWindow(WC_BUTTON, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 278, 140, 70, 35, windowHandle, (HMENU)NEW_FILE_OPTIONS_OK, NULL, NULL);
+	unsigned int buttonsBaseXPos = (NEW_FILE_OPTIONS_WIDTH - (2 * BUTTON_WIDTH) - GENERIC_SPACING) / 2;
+	unsigned int buttonsYPos = NEW_FILE_OPTIONS_HEIGHT - 2 * (BUTTON_HEIGHT);
+
+	CreateWindow(WC_BUTTON, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+		buttonsBaseXPos, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)NEW_FILE_OPTIONS_OK, NULL, NULL);
+
+	CreateWindow(WC_BUTTON, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+		buttonsBaseXPos + BUTTON_WIDTH + GENERIC_SPACING, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)NEW_FILE_OPTIONS_CANCEL, NULL, NULL);
 }
 
 void CloseNewFileOptions(HWND windowHandle)
@@ -1433,11 +1566,18 @@ LRESULT CALLBACK SelectFileOptionProcedure(HWND windowHandle, UINT msg, WPARAM w
 void PaintSelectFileOptionWindow(HWND windowHandle)
 {
 	// Adding text with the prompt description.
-	CreateWindow(WC_STATIC, TEXT("Create a new file or open an existing one?"), WS_VISIBLE | WS_CHILD | SS_CENTER, 0, 15, 330, 30, windowHandle, NULL, NULL, NULL);
+	CreateWindow(WC_STATIC, TEXT("Create a new file or open an existing one?"), WS_VISIBLE | WS_CHILD | SS_CENTER,
+		0, 15, SELECT_FILE_OPTION_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
 
 	// Adding buttons for new file and open file.
-	CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 85, 50, 70, 35, windowHandle, (HMENU)FILE_ACTION_NEW, NULL, NULL);
-	CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER, 175, 50, 70, 35, windowHandle, (HMENU)FILE_ACTION_OPEN, NULL, NULL);
+	unsigned int buttonsBaseXPos = (SELECT_FILE_OPTION_WIDTH - (2 * BUTTON_WIDTH) - GENERIC_SPACING) / 2;
+	unsigned int buttonsYPos = SELECT_FILE_OPTION_HEIGHT - 2 * (BUTTON_HEIGHT);
+
+	CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+		buttonsBaseXPos, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)FILE_ACTION_NEW, NULL, NULL);
+
+	CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+		buttonsBaseXPos + BUTTON_WIDTH + GENERIC_SPACING, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)FILE_ACTION_OPEN, NULL, NULL);
 }
 
 void CloseSelectFileOption(HWND windowHandle)
@@ -1489,7 +1629,7 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
 	WPARAM tickLength = DivCeilInt(maxValue - minValue, TRACKBAR_TICKS);
 
 	// Adding trackbar.
-	*trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, xPos, yPos - 6, 200, 30, windowHandle, 0, NULL, NULL);
+	*trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, xPos, yPos - 6, TRACKBAR_WIDTH, TRACKBAR_HEIGHT, windowHandle, 0, NULL, NULL);
 	SendMessage(*trackbar, TBM_SETRANGEMIN, (WPARAM)FALSE, (LPARAM)minValue); // Configuring min range of trackbar.
 	SendMessage(*trackbar, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)maxValue);  // Configuring max range of trackbar.
 	SendMessage(*trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)defaultValue);	  // Configuring default selection.
@@ -1498,8 +1638,8 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
 	SendMessage(*trackbar, TBM_SETTICFREQ, tickLength, 0);					  // Configuring how many ticks are on it.
 
 	// Adding textbox.
-	*textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, xPos + 210, yPos - 2, 65, 22, windowHandle, NULL, NULL, NULL);
-	SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)6, 0); // Setting character limit.
+	*textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, xPos + TRACKBAR_WIDTH + GENERIC_SPACING, yPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, windowHandle, NULL, NULL, NULL);
+	SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
 
 	if (naturalsOnly)
 	{
@@ -1513,7 +1653,7 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
 	// Adding text which says what units the content is in, unless no units were given.
 	if (units != NULL)
 	{
-		CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, xPos + 280, yPos, 60, 22, windowHandle, NULL, NULL, NULL);
+		CreateWindow(WC_STATIC, units, WS_VISIBLE | WS_CHILD, xPos + TRACKBAR_WIDTH + GENERIC_SPACING + INPUT_TEXTBOX_WIDTH + UNITS_AFTER_TEXTBOX_SPACING, yPos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
 	}
 }
 
