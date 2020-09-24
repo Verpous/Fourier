@@ -57,7 +57,7 @@
 // Smoothing is unitless, and is in fact in the [0,1] range, so MAX_SMOOTHING isn't actually the max smoothing it's just how precise can you get between [0,1].
 #define MIN_SMOOTHING 0
 #define MAX_SMOOTHING 1000
-#define DEFAULT_SMOOTHING 500
+#define DEFAULT_SMOOTHING 1000
 #define SMOOTHING_TRACKBAR_LINESIZE 1
 #define SMOOTHING_TRACKBAR_PAGESIZE 10
 
@@ -77,6 +77,7 @@
 #define INPUT_TEXTBOX_HEIGHT 22
 #define STATIC_TEXT_HEIGHT 16
 #define STATIC_UNITS_WIDTH 50
+#define LONG_STATIC_UNITS_WIDTH 95
 #define TRACKBAR_WIDTH (INPUT_TEXTBOX_WIDTH + UNITS_AFTER_TEXTBOX_SPACING + STATIC_UNITS_WIDTH + CONTROL_DESCRIPTION_WIDTH) // This value ensures that the smoothing trackbar has the right alignment with other controls.
 #define TRACKBAR_HEIGHT 30
 #define BUTTON_WIDTH 70
@@ -100,7 +101,7 @@
 #define GENERIC_SPACING 10 // We use this to distance some things.
 
 // Decibel is a unit which requires a reference point to measure against. This is that for the logarithm scale of fourier graphs.
-#define FOURIER_DECIBEL_REFERENCE 5.0
+#define FOURIER_DECIBEL_REFERENCE 3.0
 
 // How many characters are allowed in input controls for numbers (which is all of them).
 #define INPUT_TEXTBOX_CHARACTER_LIMIT 8
@@ -731,7 +732,6 @@ void ApplyModificationFromInput(HWND windowHandle)
 
 	// Converting fromFreq and toFreq from real frequencies to integer sample numbers.
 	// The total samples is twice what it says because this is a real FFT so we only store half the samples, the other half is conjugate symmetric.
-	// TODO: make sure these get floored properly or rounded in a different way if it's determined to be preferable.
 	unsigned long long totalSamples = 2 * NumOfSamples(fileEditor.channelsData[currentChannel]);
 	unsigned long long fromFreqInt = (fromFreq * totalSamples) / fileEditor.fileInfo->format.contents.Format.nSamplesPerSec;
 	unsigned long long toFreqInt = (toFreq * totalSamples) / fileEditor.fileInfo->format.contents.Format.nSamplesPerSec;
@@ -803,7 +803,8 @@ void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 		fileEditor.channelsDomain = calloc(relevantChannels, sizeof(FunctionDomain));
 		fileEditor.waveformGraphs = calloc(relevantChannels, sizeof(HBITMAP));
 		fileEditor.fourierGraphs = calloc(relevantChannels, sizeof(HBITMAP));
-		fileEditor.graphingDC = CreateCompatibleDC(NULL); // TODO: free this with DeleteDC (and also free the callocs above this) in CloseFileEditor, but only if they're allocated.
+		fileEditor.fourierGraphsPeaks = malloc(relevantChannels * sizeof(unsigned short));
+		fileEditor.graphingDC = CreateCompatibleDC(NULL);
 		fileEditor.currentSaveState = fileEditor.modificationStack;
 
 		// There's no reason to delete and recreate this between different files. The fact that we only allocate it once means we have to be careful to deallocate it exactly once, though, meaning not in CloseFileEditor.
@@ -823,15 +824,12 @@ void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 
 void PaintFileEditor()
 {
-	if (IsEditorOpen())
-	{
-		ResetFileEditorPermanents();
-	}
-	else
+	if (!IsEditorOpen())
 	{
 		PaintFileEditorPermanents();
 	}
 
+	ResetFileEditorPermanents();
 	PaintFileEditorTemporaries();
 }
 
@@ -866,6 +864,7 @@ void PaintFileEditorPermanents()
 	// Now doing fourier transforms.
 	unsigned int fourierGraphYPos = WAVEFORM_GRAPH_Y_POS + GRAPH_HEIGHT + INPUTS_Y_SPACING;
 	unsigned int fourierDecibelUnitsBaseYPos = fourierGraphYPos - (STATIC_TEXT_HEIGHT / 2);
+	unsigned int fourierFrequencyUnitsBaseXPos = graphXPos - (LONG_STATIC_UNITS_WIDTH / 2);
 	unsigned int fourierFrequencyUnitsYPos = fourierGraphYPos + GRAPH_HEIGHT + (STATIC_TEXT_HEIGHT / 2);
 
 	CreateWindow(WC_STATIC, TEXT("Frequency spectrum:"), WS_CHILD | WS_VISIBLE,
@@ -874,14 +873,14 @@ void PaintFileEditorPermanents()
 	CreateWindow(WC_STATIC, TEXT("0dB"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
 		unitsXPos, fourierDecibelUnitsBaseYPos + GRAPH_HEIGHT, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.fourierMaxStatic = CreateWindow(WC_STATIC, TEXT("90dB"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
+	fileEditor.fourierMaxStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | SS_RIGHT,
 		unitsXPos,fourierDecibelUnitsBaseYPos, STATIC_UNITS_WIDTH, 27, mainWindowHandle, NULL, NULL, NULL);
 
 	fileEditor.minFreqStatic = CreateWindow(WC_STATIC, TEXT("0KHz"), WS_CHILD | WS_VISIBLE | SS_CENTER,
-		graphXPos - (STATIC_UNITS_WIDTH / 2), fourierFrequencyUnitsYPos, STATIC_UNITS_WIDTH, STATIC_UNITS_WIDTH, mainWindowHandle, NULL, NULL, NULL); // TODO: May want to only allow editing starting from 1Hz because 0 is special. Maybe it should say 0 here anyway though.
+		fourierFrequencyUnitsBaseXPos, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL); // TODO: May want to only allow editing starting from 1Hz because 0 is special. Maybe it should say 0 here anyway though.
 
-	fileEditor.maxFreqStatic = CreateWindow(WC_STATIC, TEXT("20KHz"), WS_CHILD | WS_VISIBLE | SS_CENTER,
-		graphXPos - (STATIC_UNITS_WIDTH / 2) + GRAPH_WIDTH, fourierFrequencyUnitsYPos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL); // TODO: change units to Hz when sample rate is below a threshold.
+	fileEditor.maxFreqStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | SS_CENTER,
+		fourierFrequencyUnitsBaseXPos + GRAPH_WIDTH, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, graphXPos, fourierGraphYPos, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
@@ -924,13 +923,12 @@ void PaintFileEditorPermanents()
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Multiply"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Add"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Subtract"));
-	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0); // Setting "multiply" as the default selection.
 
 	// Adding a textbox for choosing the change amount.
 	CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD,
 		toFrequencyBaseXPos, chooseChangeYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT("0.000"), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 
+	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 
 		toFrequencyBaseXPos + CONTROL_DESCRIPTION_WIDTH, chooseChangeYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.changeAmountTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.changeAmountTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
@@ -942,7 +940,7 @@ void PaintFileEditorPermanents()
 		graphXPos, chooseSmoothingYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	AddTrackbarWithTextbox(mainWindowHandle, &(fileEditor.smoothingTrackbar), &(fileEditor.smoothingTextbox), graphXPos + CONTROL_DESCRIPTION_WIDTH, chooseSmoothingYPos,
-						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT("0.") TXStringify(DEFAULT_SMOOTHING), NULL, FALSE); // TODO: change default to 1 (I think)
+						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT(""), NULL, FALSE);
 
 	// Adding buttons for undo, redo, apply.
 	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED,
@@ -982,6 +980,27 @@ void PaintFileEditorTemporaries()
 	SetWindowPos(fileEditor.channelTabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE); // Editing the tab control brings it to front. This fixes that.
 	UpdateWindowTitle();
 	PlotAndDisplayChannelGraphs(0);
+
+	unsigned int nyquist = fileEditor.fileInfo->format.contents.Format.nSamplesPerSec / 2;
+
+	// If the nyquist frequency is below 1000, the x axis is in hertz.
+	if (1000 >= nyquist)
+	{
+		TCHAR buffer[16];
+		_ultot_s(nyquist, buffer, 16, 10);
+		_tcscat_s(buffer, 16, TEXT("Hz"));
+
+		SendMessage(fileEditor.minFreqStatic, WM_SETTEXT, 0, (LPARAM)TEXT("0Hz"));
+		SendMessage(fileEditor.maxFreqStatic, WM_SETTEXT, 0, (LPARAM)buffer);
+	}
+	else // Nyquist frequency is above/equal 1000, using KHz.
+	{
+		TCHAR buffer[16];
+		_stprintf_s(buffer, 16, TEXT("%gKHz"), nyquist / 1000.0);
+		
+		SendMessage(fileEditor.minFreqStatic, WM_SETTEXT, 0, (LPARAM)TEXT("0KHz"));
+		SendMessage(fileEditor.maxFreqStatic, WM_SETTEXT, 0, (LPARAM)buffer);
+	}
 }
 
 void ResetFileEditorPermanents()
@@ -991,8 +1010,8 @@ void ResetFileEditorPermanents()
 	SendMessage(fileEditor.toFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
 	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0);
 	SendMessage(fileEditor.changeAmountTextbox, WM_SETTEXT, 0, (LPARAM)TEXT("0.000"));
-	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(TEXT("0.") TXStringify(DEFAULT_SMOOTHING)));
-	SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING); // This should fire a sync operation which will set the textbox accordingly.
+	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(DEFAULT_SMOOTHING == MAX_SMOOTHING ? TEXT("1.000") : TEXT("0.")));
+	SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING);
 }
 
 void SetChannelDomain(unsigned short channel, FunctionDomain domain)
@@ -1115,6 +1134,10 @@ void PlotChannelFourier(unsigned short channel)
 	/* Converting to logarithmic scale, and add a little so the graph peak isn't exactly on the last pixel.*/													\
 	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE) + CAST(1.5, precision##Real); 											\
 																																								\
+	/* Rounding globalMax up so it's an integer that will be prettier to display as the text that says what the max value is, and caching that value.*/			\
+	globalMax = ceil_##precision##Real(globalMax);																												\
+	fileEditor.fourierGraphsPeaks[channel] = lround_##precision##Real(globalMax);																				\
+																																								\
 	/* This is the slope of the linear function which maps decibels to y pixels.*/																				\
 	precision##Real yMappingSlope = GRAPH_HEIGHT / globalMax; 																									\
 																																								\
@@ -1222,7 +1245,11 @@ void DisplayChannelFourier(unsigned short channel)
 		return;
 	}
 
+	TCHAR buffer[16];
+	_ultot_s(fileEditor.fourierGraphsPeaks[channel], buffer, 16, 10);
+	_tcscat_s(buffer, 16, TEXT("dB"));
 	SendMessage(fileEditor.fourierGraphStatic, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)fileEditor.fourierGraphs[channel]);
+	SendMessage(fileEditor.fourierMaxStatic, WM_SETTEXT, 0, (LPARAM)buffer);
 }
 
 void DisplayChannelGraphs(unsigned short channel)
@@ -1244,10 +1271,12 @@ void CloseFileEditor()
 	DeallocateModificationStack(fileEditor.modificationStack);
 	CloseWaveFile(fileEditor.fileInfo);
 	free(fileEditor.channelsDomain);
+	free(fileEditor.fourierGraphsPeaks);
 
 	fileEditor.fileInfo = NULL;
 	fileEditor.channelsData = NULL;
 	fileEditor.channelsDomain = NULL;
+	fileEditor.fourierGraphsPeaks = NULL;
 	fileEditor.waveformGraphs = NULL;
 	fileEditor.fourierGraphs = NULL;
 	fileEditor.modificationStack = NULL;

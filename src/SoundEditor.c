@@ -24,6 +24,7 @@
 #include <limits.h>	 // For CHAR_BIT.
 #include <stdio.h>	 // For fprintf.
 
+// TODO: convert to inline function which implements this using sincos, as opposed to cexp.
 #define RootOfUnity_DoubleComplex(k, N) cexp_DoubleComplex((CAST(-2.0 * M_PI, DoubleComplex) * I * (k)) / (N))
 #define RootOfUnity_FloatComplex(k, N) cexp_FloatComplex((CAST(-2.0 * M_PI, FloatComplex) * I * (k)) / (N))
 

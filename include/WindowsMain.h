@@ -30,6 +30,7 @@ typedef struct FileEditor
 
 	HBITMAP* waveformGraphs;			// An array of bitmaps including graphs of all the channels' waveforms. NULL for channels that aren't drawn yet.
 	HBITMAP* fourierGraphs;				// An array of bitmaps including graphs of all the channels' fourier transforms. NULL for channels that aren't drawn yet.
+	unsigned short* fourierGraphsPeaks;	// An array of decibel values to be used as the highest point for the channels' fourier transform graphs.
 	HDC graphingDC;						// The device context used to paint all the waveform and frequency graphs.
 
 	Modification* modificationStack;	// A stack of all the changes the user applies, for undoing and redoing them. Only NULL when no file is open.
