@@ -17,6 +17,7 @@
 #include "WindowsMain.h"
 #include "MyUtils.h"
 #include "Resource.h"
+#include <windowsx.h>	// For GET_X_LPARAM.
 #include <stdio.h>		// For printing errors and such.
 #include <commctrl.h>	// For some trackbar-related things.
 #include <tchar.h>		// For dealing with unicode and ANSI strings.
@@ -54,6 +55,9 @@
 #define FREQUENCY_TRACKBAR_LINESIZE 50
 #define FREQUENCY_TRACKBAR_PAGESIZE 1000
 
+// The default byte depth.
+#define NEW_FILE_DEFAULT_BYTE_DEPTH 2
+
 // Smoothing is unitless, and is in fact in the [0,1] range, so MAX_SMOOTHING isn't actually the max smoothing it's just how precise can you get between [0,1].
 #define MIN_SMOOTHING 0
 #define MAX_SMOOTHING 1000
@@ -63,6 +67,9 @@
 
 // How many ticks we want to have in a trackbar.
 #define TRACKBAR_TICKS 11
+
+// The size of buffer that we use when parsing numbers to and from strings.
+#define NUMBER_BUFFER_LEN 16
 
 // Dimensions of windows. Everything is in pixels.
 #define MAIN_WINDOW_WIDTH 1152 // Used to be 850
@@ -100,8 +107,22 @@
 #define UNITS_AFTER_TEXTBOX_SPACING 5
 #define GENERIC_SPACING 10 // We use this to distance some things.
 
+// The actual amount of samples required to surpass these thresholds is twice what it seems, because complex interleaved form means we think there are only half the samples.
+#define LOW_SAMPLE_THRESHOLD (GRAPH_WIDTH / 6) // Files with fewer samples than this get plotted as a matchstick graph.
+#define MEDIUM_SAMPLE_THRESHOLD (15 * GRAPH_WIDTH) // Files with fewer samples than this but more than LOW_SAMPLE_THRESHOLD get plotted by drawing lines between samples.
+
+// Constants related to reducing the step size for graph plotting when the sample length gets too big.
+#define MAX_STEP_SIZE_DIVISOR 100 // The max allowed step size is the sample rate divided by this.
+#define START_INCREASING_STEP_SIZE_THRESHOLD 250000 // Beyond this many samples, step size begins to decrease.
+
 // Decibel is a unit which requires a reference point to measure against. This is that for the logarithm scale of fourier graphs.
-#define FOURIER_DECIBEL_REFERENCE 3.0
+#define FOURIER_DECIBEL_REFERENCE 1.0
+
+// Colors used for graphs.
+#define WAVEFORM_BACKGROUND_COLOR RGB(245, 250, 248)
+#define WAVEFORM_FOREGROUND_COLOR RGB(217, 87, 0)
+#define FOURIER_BACKGROUND_COLOR WAVEFORM_BACKGROUND_COLOR
+#define FOURIER_FOREGROUND_COLOR RGB(157, 0, 51)
 
 // How many characters are allowed in input controls for numbers (which is all of them).
 #define INPUT_TEXTBOX_CHARACTER_LIMIT 8
@@ -115,7 +136,9 @@
 #define TITLE_POSTFIX TEXT(" - Fourier")
 
 static HWND mainWindowHandle = NULL;
+static HICON programIcon = NULL;
 static NewFileOptionsWindow* newFileOptionsHandles = NULL;
+static NewFileOptionsSelections newFileOptionsSelections = {.length = NEW_FILE_DEFAULT_LENGTH, .frequency = NEW_FILE_DEFAULT_FREQUENCY, .byteDepth = NEW_FILE_DEFAULT_BYTE_DEPTH };
 static FileEditor fileEditor = {0};
 
 #pragma region Initialization
@@ -148,6 +171,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 char InitializeWindows(HINSTANCE instanceHandle)
 {
+	programIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
+
 	if (!RegisterClasses(instanceHandle))
 	{
 		return FALSE;
@@ -180,7 +205,7 @@ char RegisterMainWindowClass(HINSTANCE instanceHandle)
 	mainWindowClass.hInstance = instanceHandle;
 	mainWindowClass.lpszClassName = WC_MAINWINDOW;
 	mainWindowClass.lpfnWndProc = MainWindowProcedure;
-	mainWindowClass.hIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
+	mainWindowClass.hIcon = programIcon;
 
 	// Registering this class. If it fails, we'll log it and end the program.
 	if (!RegisterClass(&mainWindowClass))
@@ -201,6 +226,7 @@ char RegisterNewFileOptionsClass(HINSTANCE instanceHandle)
 	dialog.hInstance = instanceHandle;
 	dialog.lpszClassName = WC_NEWFILEOPTIONS;
 	dialog.lpfnWndProc = NewFileOptionsProcedure;
+	dialog.hIcon = programIcon;
 
 	// Registering this class. If it fails, we'll log it and end the program.
 	if (!RegisterClass(&dialog))
@@ -221,6 +247,7 @@ char RegisterSelectFileOptionClass(HINSTANCE instanceHandle)
 	dialog.hInstance = instanceHandle;
 	dialog.lpszClassName = WC_SELECTFILEOPTION;
 	dialog.lpfnWndProc = SelectFileOptionProcedure;
+	dialog.hIcon = programIcon;
 
 	// Registering this class. If it fails, we'll log it and end the program.
 	if (!RegisterClass(&dialog))
@@ -248,51 +275,30 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 			PopSelectFileOptionDialog(windowHandle);
 			return 0;
 		case WM_COMMAND:
-			ProcessMainWindowCommand(windowHandle, wparam, lparam);
-			return 0;
+			return ProcessMainWindowCommand(windowHandle, wparam, lparam);
 		case WM_HSCROLL:
-			// Updating the textbox to match the trackbar.
-			if (fileEditor.smoothingTrackbar == (HWND)lparam)
-			{
-				SyncTextboxToTrackbarFloat(fileEditor.smoothingTrackbar, fileEditor.smoothingTextbox);
-			}
-
-			return 0;
+			return ProcessHScroll((HWND)lparam);
+		case WM_LBUTTONDBLCLK:
+			return ProcessLMBDoubleClick(lparam);
+		case WM_LBUTTONDOWN:
+			return ProcessLMBDown(lparam);
+		case WM_LBUTTONUP:
+			return ProcessLMBUp();
+		case WM_MOUSEMOVE:
+			return ProcessMouseMove(lparam);
 		case WM_NOTIFY:
-			if (((LPNMHDR)lparam)->code == TCN_SELCHANGE)
-			{
-				unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
-
-				// If the waveform of this channel hasn't been painted yet, then neither has the fourier transform. If it has been painted, then so has the fourier transform.
-				if (fileEditor.waveformGraphs[currentChannel] == NULL)
-				{
-					PlotChannelGraphs(currentChannel);
-				}
-				
-				DisplayChannelGraphs(currentChannel);
-			}
-
-			return 0;
+			return ProcessNotification(wparam, (LPNMHDR)lparam);
+		case WM_CTLCOLORSTATIC:
+			return ProcessControlColorStatic((HDC)wparam, (HWND)lparam);
 		case WM_CLOSE:
-			// Prompt the user to save his progress before it is lost.
-			if (PromptSaveProgress(windowHandle))
-			{
-				// Only proceeding if the user didn't choose to abort.
-				CloseFileEditor();
-
-				// This aspect of the file editor is only allocated once on the first file open which means it only needs to be deleted once, here.
-				if (fileEditor.graphingDC != NULL)
-				{
-					DeleteDC(fileEditor.graphingDC);
-				}
-
-				DestroyWindow(windowHandle);
-			}
-
-			return 0;
+			return PromptSaveAndClose();
 		case WM_DESTROY:
 			PostQuitMessage(0);
 			return 0;
+		// The following two cases are handled fine by the default window procedure, except that isSelecting needs to be set to FALSE.
+		case WM_CAPTURECHANGED:
+		case WM_CANCELMODE:
+			fileEditor.isSelecting = FALSE;
 		default:
 			return DefWindowProc(windowHandle, msg, wparam, lparam);
 	}
@@ -336,7 +342,148 @@ void PopSelectFileOptionDialog(HWND windowHandle)
 	EnableWindow(windowHandle, FALSE);
 }
 
-void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
+
+LRESULT ProcessHScroll(HWND scrolledWindow)
+{
+	// Updating the textbox to match the trackbar.
+	if (fileEditor.smoothingTrackbar == scrolledWindow)
+	{
+		SyncTextboxToTrackbarFloat(fileEditor.smoothingTrackbar, fileEditor.smoothingTextbox);
+	}
+
+	return 0;
+}
+
+LRESULT ProcessLMBDoubleClick(LPARAM lparam)
+{
+	if (fileEditor.fileInfo != NULL)
+	{
+		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
+
+		// We begin selecting from this point, but only if the point that was pressed is inside the fourier graph static's bounds.
+		if (IsInWindow(point, fileEditor.fourierGraphStatic))
+		{
+			// The user double-clicked while hovering over the fourier graph. Selecting everything.
+			PaintSelection(0, GRAPH_WIDTH);
+		}
+	}
+
+	return 0;
+}
+
+LRESULT ProcessLMBDown(LPARAM lparam)
+{
+	if (fileEditor.fileInfo != NULL)
+	{
+		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
+
+		// We begin selecting from this point, but only if the point that was pressed is inside the fourier graph static's bounds.
+		if (IsInWindow(point, fileEditor.fourierGraphStatic))
+		{
+			// Mapping the point where the button was pressed down into local coordinates of the fourier graph static.
+			int mapping = MapWindowPoints(mainWindowHandle, fileEditor.fourierGraphStatic, &point, 1);
+
+			// MapWindowPoints returns 0 on failure. It can also sometimes return 0 on success, but not in our case so we don't check for it.
+			if (mapping != 0)
+			{
+				PaintSelection(point.x, point.x);
+				fileEditor.isSelecting = TRUE;
+
+				// In order to guarantee that we'll receive an LBUTTONUP message even if the window loses focus, we must capture the mouse.
+				SetCapture(mainWindowHandle);
+			}
+		}
+	}
+
+	return 0;
+}
+
+LRESULT ProcessLMBUp()
+{
+	if (fileEditor.isSelecting)
+	{
+		fileEditor.isSelecting = FALSE;
+		ReleaseCapture();
+	}
+
+	return 0;
+}
+
+LRESULT ProcessMouseMove(LPARAM lparam)
+{
+	if (fileEditor.isSelecting)
+	{
+		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
+		int mapping = MapWindowPoints(mainWindowHandle, fileEditor.fourierGraphStatic, &point, 1);
+
+		// MapWindowPoints returns 0 on failure. It can also sometimes return 0 on success, but not in our case so we don't check for it.
+		if (mapping != 0)
+		{
+			// TODO: when selection starts, store the point at which it starts. All future selections originate from that point.
+		}
+	}
+
+	return 0;
+}
+
+LRESULT ProcessNotification(WPARAM wparam, LPNMHDR nmhdr)
+{
+	if (nmhdr->code == TCN_SELCHANGE)
+	{
+		unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
+
+		// If the waveform of this channel hasn't been painted yet, then neither has the fourier transform. If it has been painted, then so has the fourier transform.
+		if (fileEditor.waveformGraphs[currentChannel] == NULL)
+		{
+			PlotChannelGraphs(currentChannel);
+		}
+		
+		DisplayChannelGraphs(currentChannel);
+	}
+
+	return 0;
+}
+
+LRESULT ProcessControlColorStatic(HDC controlHDC, HWND controlWindow)
+{
+	// We change the foreground and background colors of the graph static controls so that graphs are painted with the appropriate colors.
+	if (controlWindow == fileEditor.waveformGraphStatic)
+	{
+		SetBkColor(controlHDC, WAVEFORM_BACKGROUND_COLOR);
+		SetTextColor(controlHDC, WAVEFORM_FOREGROUND_COLOR);
+		return (LRESULT)GetStockObject(WHITE_BRUSH);
+	}
+	else if (controlWindow == fileEditor.fourierGraphStatic)
+	{
+		SetBkColor(controlHDC, FOURIER_BACKGROUND_COLOR);
+		SetTextColor(controlHDC, FOURIER_FOREGROUND_COLOR);
+		return (LRESULT)GetStockObject(WHITE_BRUSH);
+	}
+
+	return DefWindowProc(mainWindowHandle, WM_CTLCOLORSTATIC, controlHDC, controlWindow);
+}
+
+LRESULT PromptSaveAndClose()
+{
+	// Prompt the user to save his progress before it is lost.
+	if (PromptSaveProgress(mainWindowHandle))
+	{
+		// Only proceeding if the user didn't choose to abort.
+		CloseFileEditor();
+
+		// This aspect of the file editor is only allocated once on the first file open which means it only needs to be deleted once, here.
+		if (fileEditor.graphingDC != NULL)
+		{
+			DeleteDC(fileEditor.graphingDC);
+		}
+
+		DestroyWindow(mainWindowHandle);
+	}
+
+	return 0;
+}
+
+LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 {
 	switch (HIWORD(wparam))
 	{
@@ -402,6 +549,8 @@ void ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 		default:
 			break;
 	}
+
+	return 0;
 }
 
 void FileNew(HWND windowHandle)
@@ -502,10 +651,10 @@ void FileOpen(HWND windowHandle)
 					messageText = TEXT("The file uses an unsupported sample rate.");
 					break;
 				case FILE_BAD_SIZE:
-					messageText = TEXT("The file's actual size does not match up with what it should be.");
+					messageText = TEXT("The file size could not be determined.");
 					break;
 				case FILE_BAD_SAMPLES:
-					messageText = TEXT("The file has an audio length of 0 seconds.");
+					messageText = TEXT("The file is too short.");
 					break;
 				case FILE_MISC_ERROR:
 				default:
@@ -600,9 +749,10 @@ void FileSaveAs(HWND windowHandle)
 			}
 
 			// Checking if the file already exists and popping a warning if it does.
+			// Doing this manually and not using the OFN_OVERWRITEPROMPT flag because we append the file extension in the end, so the flag won't always catch it that a file will be overwritten.
 			if (FileExists(filename))
 			{
-				int choice = MessageBox(windowHandle, TEXT("The existing file will be overwritten by this operation. Proceed anyway?"), TEXT("Warning"), MB_YESNOCANCEL | MB_ICONWARNING);
+				int choice = MessageBox(windowHandle, TEXT("A file with this name already exists and will be overwritten by this operation. Proceed anyway?"), TEXT("Warning"), MB_YESNOCANCEL | MB_ICONWARNING);
 
 				// Using an if statement instead of switch statement because I need to be able to use break here and not have it only break from the switch.
 				if (choice == IDCANCEL)
@@ -644,15 +794,12 @@ void FileSaveAs(HWND windowHandle)
 
 			fprintf(stderr, "GetSaveFileName failed with error code %lX\n", error);
 
-			if (error == FNERR_BUFFERTOOSMALL)
-			{
-				LPCTSTR msg = error == FNERR_BUFFERTOOSMALL ? TEXT("Path name exceeds the upper limit of ") TXStringify(MAX_PATH - 4) TEXT(" characters.") : TEXT("There was an error in retrieving the file name.");
-				int choice = MessageBox(windowHandle, msg, NULL, MB_RETRYCANCEL | MB_ICONERROR);
+			LPCTSTR msg = error == FNERR_BUFFERTOOSMALL ? TEXT("Path name exceeds the upper limit of ") TXStringify(MAX_PATH - 4) TEXT(" characters.") : TEXT("There was an error in retrieving the file name.");
+			int choice = MessageBox(windowHandle, msg, NULL, MB_RETRYCANCEL | MB_ICONERROR);
 
-				if (choice == IDCANCEL)
-				{
-					break;
-				}
+			if (choice == IDCANCEL)
+			{
+				break;
 			}
 		}
 	}
@@ -686,11 +833,11 @@ void ApplyModificationFromInput(HWND windowHandle)
 		return;
 	}
 	
-	TCHAR buffer[16];
+	TCHAR buffer[NUMBER_BUFFER_LEN];
 	TCHAR* endChar;
 
 	// First reading the from frequency.
-	LRESULT length = SendMessage(fileEditor.fromFreqTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
+	LRESULT length = SendMessage(fileEditor.fromFreqTextbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
 	double fromFreq = _tcstod(buffer, &endChar);
 
 	// This condition is met when the float couldn't be parsed from the string.
@@ -701,7 +848,7 @@ void ApplyModificationFromInput(HWND windowHandle)
 	}
 
 	// Now reading to frequency.
-	length = SendMessage(fileEditor.toFreqTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
+	length = SendMessage(fileEditor.toFreqTextbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
 	double toFreq = _tcstod(buffer, &endChar);
 
 	if (length == 0 || endChar != &(buffer[length]))
@@ -715,7 +862,7 @@ void ApplyModificationFromInput(HWND windowHandle)
 	ChangeType changeType = changeSelection == 0 ? MULTIPLY : ADD;
 
 	// Reading the change amount. If the user selected the "subtract" option, I multiply the amount by -1.
-	length = SendMessage(fileEditor.changeAmountTextbox, WM_GETTEXT, 16, (LPARAM)buffer);
+	length = SendMessage(fileEditor.changeAmountTextbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
 	double changeAmount = _tcstod(buffer, &endChar) * (changeSelection == 2 ? -1.0 : 1.0);
 
 	if (length == 0 || endChar != &(buffer[length]))
@@ -736,10 +883,24 @@ void ApplyModificationFromInput(HWND windowHandle)
 	unsigned long long fromFreqInt = (fromFreq * totalSamples) / fileEditor.fileInfo->format.contents.Format.nSamplesPerSec;
 	unsigned long long toFreqInt = (toFreq * totalSamples) / fileEditor.fileInfo->format.contents.Format.nSamplesPerSec;
 
-	// TODO: possibly also check that the samples are close enough together.
-	if (!(0 <= fromFreqInt && fromFreqInt < totalSamples / 2) || !(0 <= toFreqInt && toFreqInt < totalSamples / 2))
+	// We add want to hide from the user the fact that the first and last samples can't be edited, so we secretly move them one sample in these cases.
+	// The first sample can't be edited because it stands for 0Hz so it isn't really a frequency.
+	// The last sample can't be edited because the nyquist-shannon theorem states that only frequencies *strictly* smaller than f/2 can be edited.
+	if (fromFreqInt == 0)
 	{
-		MessageBox(windowHandle, TEXT("Frequencies to modify are out of range"), NULL, MB_OK | MB_ICONERROR);
+		fromFreqInt++;
+	}
+
+	if (toFreqInt == totalSamples / 2)
+	{
+		toFreqInt--;
+	}
+
+	if (!(1 <= fromFreqInt && fromFreqInt < totalSamples / 2) || !(1 <= toFreqInt && toFreqInt < totalSamples / 2))
+	{
+		TCHAR msg[64];
+		_stprintf_s(msg, 64, TEXT("Frequencies to modify must be between 0 and %u."), fileEditor.fileInfo->format.contents.Format.nSamplesPerSec);
+		MessageBox(windowHandle, msg, NULL, MB_OK | MB_ICONERROR);
 		return;
 	}
 
@@ -877,12 +1038,13 @@ void PaintFileEditorPermanents()
 		unitsXPos,fourierDecibelUnitsBaseYPos, STATIC_UNITS_WIDTH, 27, mainWindowHandle, NULL, NULL, NULL);
 
 	fileEditor.minFreqStatic = CreateWindow(WC_STATIC, TEXT("0KHz"), WS_CHILD | WS_VISIBLE | SS_CENTER,
-		fourierFrequencyUnitsBaseXPos, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL); // TODO: May want to only allow editing starting from 1Hz because 0 is special. Maybe it should say 0 here anyway though.
+		fourierFrequencyUnitsBaseXPos, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	fileEditor.maxFreqStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | SS_CENTER,
 		fourierFrequencyUnitsBaseXPos + GRAPH_WIDTH, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, graphXPos, fourierGraphYPos, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.selectionRect.bottom = GRAPH_HEIGHT; 
 
 	// Adding GUI for choosing what frequency to modify.
 	unsigned int chooseFrequenciesYPos = fourierGraphYPos + GRAPH_HEIGHT + INPUTS_Y_SPACING;
@@ -986,17 +1148,17 @@ void PaintFileEditorTemporaries()
 	// If the nyquist frequency is below 1000, the x axis is in hertz.
 	if (1000 >= nyquist)
 	{
-		TCHAR buffer[16];
-		_ultot_s(nyquist, buffer, 16, 10);
-		_tcscat_s(buffer, 16, TEXT("Hz"));
+		TCHAR buffer[NUMBER_BUFFER_LEN];
+		_ultot_s(nyquist, buffer, NUMBER_BUFFER_LEN, 10);
+		_tcscat_s(buffer, NUMBER_BUFFER_LEN, TEXT("Hz"));
 
 		SendMessage(fileEditor.minFreqStatic, WM_SETTEXT, 0, (LPARAM)TEXT("0Hz"));
 		SendMessage(fileEditor.maxFreqStatic, WM_SETTEXT, 0, (LPARAM)buffer);
 	}
 	else // Nyquist frequency is above/equal 1000, using KHz.
 	{
-		TCHAR buffer[16];
-		_stprintf_s(buffer, 16, TEXT("%gKHz"), nyquist / 1000.0);
+		TCHAR buffer[NUMBER_BUFFER_LEN];
+		_stprintf_s(buffer, NUMBER_BUFFER_LEN, TEXT("%gKHz"), nyquist / 1000.0);
 		
 		SendMessage(fileEditor.minFreqStatic, WM_SETTEXT, 0, (LPARAM)TEXT("0KHz"));
 		SendMessage(fileEditor.maxFreqStatic, WM_SETTEXT, 0, (LPARAM)buffer);
@@ -1010,7 +1172,7 @@ void ResetFileEditorPermanents()
 	SendMessage(fileEditor.toFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
 	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0);
 	SendMessage(fileEditor.changeAmountTextbox, WM_SETTEXT, 0, (LPARAM)TEXT("0.000"));
-	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(DEFAULT_SMOOTHING == MAX_SMOOTHING ? TEXT("1.000") : TEXT("0.")));
+	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(DEFAULT_SMOOTHING == MAX_SMOOTHING ? TEXT("1.000") : TEXT("0.") TXStringify(DEFAULT_SMOOTHING)));
 	SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING);
 }
 
@@ -1042,45 +1204,81 @@ void SetAllChannelsDomain(FunctionDomain domain)
 }
 
 void PlotChannelWaveform(unsigned short channel)
-{
-	// TODO: this is an old naive plotting algorithm. It might still come in handy for plotting waveforms with very few samples.
-	//Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);													\
-	precision##Real lengthReal = length;																														\
-	precision##Real halfHeight = GRAPH_HEIGHT / 2;																												\
-																																								\
-	for (unsigned long long i = 0; i < length; i++)																												\
-	{																																							\
-		/* Extracting the real sample from this complex function.*/																								\
-		precision##Real sample = *(CAST(&get(func, i / 2), precision##Real*) + (i % 2));																		\
-																																								\
-		/* Setting the pixel that corresponds to this sample's position on the graph.*/																			\
-		unsigned int xCoord = i * (GRAPH_WIDTH / lengthReal); /* TODO: consider different rounding techniques. Also clamp the pixels*/							\
-		unsigned int yCoord = halfHeight - (halfHeight * sample);																								\
-		SetPixel(fileEditor.graphingDC, xCoord, yCoord, WHITE_COLOR);																							\
-	}
-	
+{	
 	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
-	// TODO: potentially use a different plotting algorithm when working with a small number of samples. Maybe make it look similar to audacity's high zoom appearance.
-	#define PLOT_CHANNEL_WAVEFORM_TYPED(precision)																												\
-	Function_##precision##Real func = ReadComplexFunctionAsReal_##precision##Complex(fileEditor.channelsData[channel]);											\
-	precision##Real halfHeight = (GRAPH_HEIGHT - 1) / 2.0;																										\
-																																								\
-	/* For every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/						\
-	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																												\
-	{																																							\
-		/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/											\
-		unsigned long long startSample = ceil_DoubleReal(stepSize * i);																							\
-		unsigned long long endSample = ClampInt(ceil_DoubleReal(stepSize * (i + 1)), 0, length);																\
-																																								\
-		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
-		precision##Real min = GetMin_##precision##Real(func, startSample, endSample, 3);																			\
-		precision##Real max = GetMax_##precision##Real(func, startSample, endSample, 3);																			\
-																																								\
-		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
-		unsigned int minYCoord = ClampInt(halfHeight - (halfHeight * min), 0, GRAPH_HEIGHT - 1);																\
-		unsigned int maxYCoord = ClampInt(halfHeight - (halfHeight * max), 0, GRAPH_HEIGHT - 1);																\
-		MoveToEx(fileEditor.graphingDC, i, maxYCoord, NULL);																									\
-		LineTo(fileEditor.graphingDC, i, minYCoord + 1); /* LineTo doesn't color the last pixel which is why we add +1.*/										\
+	#define PLOT_CHANNEL_WAVEFORM_TYPED(precision)																													\
+	Function_##precision##Real func = ReadComplexFunctionAsReal_##precision##Complex(fileEditor.channelsData[channel]);												\
+	precision##Real halfHeight = (GRAPH_HEIGHT - 1) / 2.0;																											\
+																																									\
+	if (length < LOW_SAMPLE_THRESHOLD)																																\
+	{																																								\
+		/* Drawing a horizontal line across y=0 because it looks better.*/																							\
+		MoveToEx(fileEditor.graphingDC, 0, GRAPH_HEIGHT / 2, NULL);																									\
+		LineTo(fileEditor.graphingDC, GRAPH_WIDTH, GRAPH_HEIGHT / 2);																								\
+																																									\
+		/* Selecting a brush that will make circles filled.*/																										\
+		HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0));																												\
+		HBRUSH oldBrush = SelectObject(fileEditor.graphingDC, brush);																								\
+																																									\
+		/* In this mode, we map each sample to a pixel, and draw a line from 0 to it.*/																				\
+		for (unsigned long long sampleIndex = 0; sampleIndex < length; sampleIndex++)																				\
+		{																																							\
+			/* Mapping sample to pixel.*/																															\
+			precision##Real sample = get(func, sampleIndex);																										\
+			unsigned int xCoord = sampleIndex * (CAST(GRAPH_WIDTH, precision##Real) / length);																		\
+			unsigned int yCoord = ClampInt(halfHeight - (halfHeight * sample), 0, GRAPH_HEIGHT - 1);																\
+																																									\
+			/* Drawing a line from 0 to the sample's pixel.*/																										\
+			MoveToEx(fileEditor.graphingDC, xCoord, GRAPH_HEIGHT / 2, NULL);																						\
+			LineTo(fileEditor.graphingDC, xCoord, yCoord + (yCoord >= GRAPH_HEIGHT / 2 ? 1 : -1));																	\
+																																									\
+			/* A circle is drawn at the end of the line so it looks like a matchstick.*/																			\
+			Ellipse(fileEditor.graphingDC, xCoord - 2, yCoord - 2, xCoord + 2, yCoord + 2);																			\
+		}																																							\
+																																									\
+		SelectObject(fileEditor.graphingDC, oldBrush);																												\
+		DeleteObject(brush);																																		\
+	}																																								\
+	else if (length < MEDIUM_SAMPLE_THRESHOLD)																														\
+	{																																								\
+		/* In this mode, we draw line from each sample to the next.*/																								\
+		precision##Real sample = get(func, 0);																														\
+		unsigned int xCoord = 0;																																	\
+		unsigned int yCoord = ClampInt(halfHeight - (halfHeight * sample), 0, GRAPH_HEIGHT - 1);																	\
+		MoveToEx(fileEditor.graphingDC, xCoord, yCoord, NULL);																										\
+																																									\
+		for (unsigned long long sampleIndex = 1; sampleIndex < length; sampleIndex++)																				\
+		{																																							\
+			sample = get(func, sampleIndex);																														\
+			xCoord = sampleIndex * (CAST(GRAPH_WIDTH, precision##Real) / length);																					\
+			yCoord = ClampInt(halfHeight - (halfHeight * sample), 0, GRAPH_HEIGHT - 1);																				\
+			LineTo(fileEditor.graphingDC, xCoord, yCoord);																											\
+		}																																							\
+																																									\
+		/* Sometimes the line ends before the graph does so we add a line to 0 at the end.*/																		\
+		LineTo(fileEditor.graphingDC, GRAPH_WIDTH, GRAPH_HEIGHT / 2);																								\
+	}																																								\
+	else																																							\
+	{																																								\
+		unsigned long long stepSize = GetPlottingStepSize();																										\
+																																									\
+		/* In this mode, for every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/			\
+		for (unsigned int xCoord = 0; xCoord < GRAPH_WIDTH; xCoord++)																								\
+		{																																							\
+			/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/											\
+			unsigned long long startSample = ceil_DoubleReal(binSize * xCoord);																						\
+			unsigned long long endSample = ClampInt(ceil_DoubleReal(binSize * (xCoord + 1)), 0, length);															\
+																																									\
+			/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
+			precision##Real min = GetMin_##precision##Real(func, startSample, endSample, stepSize);																	\
+			precision##Real max = GetMax_##precision##Real(func, startSample, endSample, stepSize);																	\
+																																									\
+			/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
+			unsigned int minYCoord = ClampInt(halfHeight - (halfHeight * min), 0, GRAPH_HEIGHT - 1);																\
+			unsigned int maxYCoord = ClampInt(halfHeight - (halfHeight * max), 0, GRAPH_HEIGHT - 1);																\
+			MoveToEx(fileEditor.graphingDC, xCoord, maxYCoord, NULL);																								\
+			LineTo(fileEditor.graphingDC, xCoord, minYCoord + 1); /* LineTo doesn't color the last pixel which is why we add +1.*/									\
+		}																																							\
 	}
 
 	SetChannelDomain(channel, TIME_DOMAIN);
@@ -1103,7 +1301,7 @@ void PlotChannelWaveform(unsigned short channel)
 
 	// For every sample in the function that isn't zero-padding, setting the pixel it corresponds to. Length is doubled because we'll be reading a complex sequence as if it's a real sequence of twice the length.
 	unsigned long long length = fileEditor.fileInfo->sampleLength;
-	DoubleReal stepSize = length / ((DoubleReal)GRAPH_WIDTH); // Always double precision because it's used for sample indices, not sample values.
+	DoubleReal binSize = length / ((DoubleReal)GRAPH_WIDTH); // Always double precision because it's used for sample indices, not sample values.
 
 	// From this point on we need to know if the function uses single or double precision. Either way it's gonna be in complex interleaved form, more on that in the documentation of RealInterleavedFFT.
 	if (GetType(fileEditor.channelsData[channel]) == FloatComplexType)
@@ -1120,45 +1318,48 @@ void PlotChannelWaveform(unsigned short channel)
 
 void PlotChannelFourier(unsigned short channel)
 {	
-	// TODO: Investigate different step sizes for min and max further and performances and determine the best course of action.
 	// This macro contains the contents of this function that depend on the float precision. It needs to be declared at the start before it is used.
-	#define PLOT_CHANNEL_FOURIER_TYPED(precision)																												\
-	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);													\
-																																								\
-	/* We'll be plotting the graph such that the highest pixel represents the global maximum point.*/															\
-	precision##Real globalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length, 3)); 													\
-																																								\
-	/* Clamping the value so it isn't smaller than the decibel reference, which is the smallest number that we plot while globalMax is the highest.*/			\
-	globalMax = Clamp##precision(globalMax, FOURIER_DECIBEL_REFERENCE, MAX_##precision##Real);																	\
-																																								\
-	/* Converting to logarithmic scale, and add a little so the graph peak isn't exactly on the last pixel.*/													\
-	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE) + CAST(1.5, precision##Real); 											\
-																																								\
-	/* Rounding globalMax up so it's an integer that will be prettier to display as the text that says what the max value is, and caching that value.*/			\
-	globalMax = ceil_##precision##Real(globalMax);																												\
-	fileEditor.fourierGraphsPeaks[channel] = lround_##precision##Real(globalMax);																				\
-																																								\
-	/* This is the slope of the linear function which maps decibels to y pixels.*/																				\
-	precision##Real yMappingSlope = GRAPH_HEIGHT / globalMax; 																									\
-																																								\
-	/* For every x pixel, we find the min and max values from the set of samples that map to this pixel, and draw a line between them.*/						\
-	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																												\
-	{																																							\
-		/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/											\
-		unsigned long long startSample = ceil_DoubleReal(stepSize * i);																							\
-		unsigned long long endSample = ClampInt(ceil_DoubleReal(stepSize * (i + 1)), 0, length);																\
-																																								\
-		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
-		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, 3));											\
-																																								\
-		/* Converting to logarithmic scale. Had a bug with the integer conversion when this returns -INF, so I only proceed if max is above the reference.*/	\
-		max = max < FOURIER_DECIBEL_REFERENCE ? 0.0 : LinearToDecibel##precision##Real(max, FOURIER_DECIBEL_REFERENCE); 										\
-																																								\
-		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/														\
-		unsigned int yCoord = ClampInt((GRAPH_HEIGHT - 1) - (yMappingSlope * max), -1, GRAPH_HEIGHT - 1);														\
-		MoveToEx(fileEditor.graphingDC, i, GRAPH_HEIGHT - 1, NULL);																								\
-		LineTo(fileEditor.graphingDC, i, yCoord);																												\
-	}
+	#define PLOT_CHANNEL_FOURIER_TYPED(precision)																													\
+	Function_##precision##Complex func = *((Function_##precision##Complex*)fileEditor.channelsData[channel]);														\
+																																									\
+	unsigned long long stepSize = GetPlottingStepSize();																											\
+																																									\
+	/* We'll be plotting the graph such that the highest pixel represents the global maximum point.*/																\
+	precision##Real globalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length, stepSize)); 													\
+																																									\
+	/* Clamping the value so it isn't smaller than the decibel reference, which is the smallest number that we plot while globalMax is the highest.*/				\
+	globalMax = Clamp##precision(globalMax, FOURIER_DECIBEL_REFERENCE, MAX_##precision##Real);																		\
+																																									\
+	/* Converting to logarithmic scale, and add a little so the graph peak isn't exactly on the last pixel.*/														\
+	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE) + CAST(1.5, precision##Real); 												\
+																																									\
+	/* Rounding globalMax up so it's an integer that will be prettier to display as the text that says what the max value is, and caching that value.*/				\
+	globalMax = ceil_##precision##Real(globalMax);																													\
+	fileEditor.fourierGraphsPeaks[channel] = lround_##precision##Real(globalMax);																					\
+																																									\
+	/* This is the slope of the linear function which maps decibels to y pixels.*/																					\
+	precision##Real yMappingSlope = GRAPH_HEIGHT / globalMax; 																										\
+																																									\
+	/* For every x pixel, we find the max value from the set of samples that map to this pixel, and draw a line from 0 to it.*/										\
+	/* Unlike waveforms, we don't need other plotting modes for low samples here because we zero-pad the DFT so it always has enough samples.*/						\
+	for (unsigned int i = 0; i < GRAPH_WIDTH; i++)																													\
+	{																																								\
+		/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/												\
+		/* The sample at index 0 is special, it makes no sense to edit since it stands fo 0Hz (what the hell is 0Hz?) so we don't plot it.*/						\
+		unsigned long long startSample = ceil_DoubleReal(binSize * i) + (i == 0 ? 1 : 0);																			\
+		unsigned long long endSample = ClampInt(ceil_DoubleReal(binSize * (i + 1)), 0, length);																		\
+																																									\
+		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																	\
+		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, stepSize));										\
+																																									\
+		/* Converting to logarithmic scale. Had a bug with the integer conversion when this returns -INF, so I only proceed if max is above the reference.*/		\
+		max = max < FOURIER_DECIBEL_REFERENCE ? 0.0 : LinearToDecibel##precision##Real(max, FOURIER_DECIBEL_REFERENCE); 											\
+																																									\
+		/* Calculating the y pixel that the min and max samples map to, and drawing a line between them.*/															\
+		unsigned int yCoord = ClampInt((GRAPH_HEIGHT - 1) - (yMappingSlope * max), -1, GRAPH_HEIGHT - 1);															\
+		MoveToEx(fileEditor.graphingDC, i, GRAPH_HEIGHT - 1, NULL);																									\
+		LineTo(fileEditor.graphingDC, i, yCoord);																													\
+	}																																								\
 
 	SetChannelDomain(channel, FREQUENCY_DOMAIN);
 
@@ -1180,7 +1381,7 @@ void PlotChannelFourier(unsigned short channel)
 
 	// For every sample in the function that isn't zero-padding, setting the pixel it corresponds to. Length is doubled because we'll be reading a complex sequence as if it's a real sequence of twice the length.
 	unsigned long long length = NumOfSamples(fileEditor.channelsData[channel]);
-	DoubleReal stepSize = length / ((DoubleReal)GRAPH_WIDTH); // Always double precision because it's used for sample indices, not sample values.
+	DoubleReal binSize = length / ((DoubleReal)GRAPH_WIDTH); // Always double precision because it's used for sample indices, not sample values.
 
 	// From this point on we need to know if the function uses single or double precision. Either way it's gonna be in complex interleaved form, more on that in the documentation of RealInterleavedFFT.
 	if (GetType(fileEditor.channelsData[channel]) == FloatComplexType)
@@ -1218,22 +1419,6 @@ void DisplayChannelWaveform(unsigned short channel)
 		return;
 	}
 
-	// TODO: this commented code successfully paints the graphs with color, but it uses beginpaint outside of the WM_PAINT message handler which is forbidden. I need to figure out how to make this work without beginpaint.
-	// PAINTSTRUCT ps;
-	// HDC tmpDC;
-	// HBITMAP oldBitmap;
-
-	// BeginPaint(mainWindowHandle, &ps);
-	// tmpDC = CreateCompatibleDC(ps.hdc);
-	// oldBitmap = (HBITMAP) SelectObject(tmpDC, fileEditor.waveformGraphs[channel]);
-	// SetBkColor(ps.hdc, RGB(255, 128, 0));
-	// SetTextColor(ps.hdc, RGB(0, 128, 255));
-	// BitBlt(ps.hdc, 50, 60, GRAPH_WIDTH, GRAPH_HEIGHT,
-	// tmpDC, 0, 0, SRCCOPY);
-	// SelectObject(tmpDC, oldBitmap);
-	// DeleteDC(tmpDC);
-	// EndPaint(mainWindowHandle, &ps);
-	
     SendMessage(fileEditor.waveformGraphStatic, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)fileEditor.waveformGraphs[channel]);
 }
 
@@ -1245,9 +1430,9 @@ void DisplayChannelFourier(unsigned short channel)
 		return;
 	}
 
-	TCHAR buffer[16];
-	_ultot_s(fileEditor.fourierGraphsPeaks[channel], buffer, 16, 10);
-	_tcscat_s(buffer, 16, TEXT("dB"));
+	TCHAR buffer[NUMBER_BUFFER_LEN];
+	_ultot_s(fileEditor.fourierGraphsPeaks[channel], buffer, NUMBER_BUFFER_LEN, 10);
+	_tcscat_s(buffer, NUMBER_BUFFER_LEN, TEXT("dB"));
 	SendMessage(fileEditor.fourierGraphStatic, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)fileEditor.fourierGraphs[channel]);
 	SendMessage(fileEditor.fourierMaxStatic, WM_SETTEXT, 0, (LPARAM)buffer);
 }
@@ -1262,6 +1447,44 @@ void PlotAndDisplayChannelGraphs(unsigned short channel)
 {
 	PlotChannelGraphs(channel);
 	DisplayChannelGraphs(channel);
+}
+
+unsigned long long GetPlottingStepSize()
+{
+	if (fileEditor.fileInfo == NULL)
+	{
+		fprintf(stderr, "Tried to get plotting step size but no file is open.\n");
+		return 1;
+	}
+
+	// We have to clamp the top clamp so it isn't smaller than 1.
+	unsigned int topClamp = ClampInt(fileEditor.fileInfo->format.contents.Format.nSamplesPerSec / MAX_STEP_SIZE_DIVISOR, 1, UINT_MAX);
+
+	// The step size is sampleLength / threshold, but it is clamped so it is no smaller than 1 and no greater than topClamp (which would normally be the sample rate divided by a constant).
+	return ClampInt(fileEditor.fileInfo->sampleLength / START_INCREASING_STEP_SIZE_THRESHOLD, 1, topClamp);
+}
+
+void PaintSelection(LONG from, LONG to)
+{
+	if (from > to)
+	{
+		LONG temp = from;
+		from = to;
+		to = temp;
+	}
+	
+	from = ClampInt(from, 0, GRAPH_WIDTH - 1);
+	to = ClampInt(from, 1, GRAPH_WIDTH);
+	
+	if (from == to)
+	{
+		to++;
+	}
+
+	// TODO: erase no-longer-selected parts of the old selection, paint newly selected ones.
+
+	fileEditor.selectionRect.left = from;
+	fileEditor.selectionRect.right = to;
 }
 
 void CloseFileEditor()
@@ -1282,6 +1505,13 @@ void CloseFileEditor()
 	fileEditor.modificationStack = NULL;
 	fileEditor.currentSaveState = NULL;
 
+	if (fileEditor.isSelecting)
+	{
+		ReleaseCapture();
+		fileEditor.isSelecting = FALSE;
+	}
+	
+	PaintSelection(0, 0);
 	UpdateUndoRedoState();
 }
 
@@ -1431,13 +1661,18 @@ LRESULT CALLBACK NewFileOptionsProcedure(HWND windowHandle, UINT msg, WPARAM wpa
 
 void PaintNewFileOptionsWindow(HWND windowHandle)
 {
+	// This buffer will be used for int to string conversions for values stored in newFileOptionsSelections.
+	TCHAR buffer[NUMBER_BUFFER_LEN];
+
 	// Adding trackbar-textbox-units triple for selecting file length.
+	_ultot_s(newFileOptionsSelections.length, buffer, NUMBER_BUFFER_LEN, 10);
 	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->lengthTrackbar), &(newFileOptionsHandles->lengthTextbox), CHOOSE_FILE_LENGTH_X_POS, CHOOSE_FILE_LENGTH_Y_POS,
-						   FILE_MIN_LENGTH, FILE_MAX_LENGTH, NEW_FILE_DEFAULT_LENGTH, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_LENGTH), TEXT("sec"), TRUE);
+						   FILE_MIN_LENGTH, FILE_MAX_LENGTH, newFileOptionsSelections.length, LENGTH_TRACKBAR_LINESIZE, LENGTH_TRACKBAR_PAGESIZE, buffer, TEXT("sec"), TRUE);
 
 	// Adding trackbar-textbox-units triple for selecting file sample rate.
+	_ultot_s(newFileOptionsSelections.frequency, buffer, NUMBER_BUFFER_LEN, 10);
 	AddTrackbarWithTextbox(windowHandle, &(newFileOptionsHandles->frequencyTrackbar), &(newFileOptionsHandles->frequencyTextbox), CHOOSE_FILE_LENGTH_X_POS, CHOOSE_FILE_LENGTH_Y_POS + INPUTS_Y_SPACING,
-						   FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, NEW_FILE_DEFAULT_FREQUENCY, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, TXStringify(NEW_FILE_DEFAULT_FREQUENCY), TEXT("Hz"), TRUE);
+						   FILE_MIN_FREQUENCY, FILE_MAX_FREQUENCY, newFileOptionsSelections.frequency, FREQUENCY_TRACKBAR_LINESIZE, FREQUENCY_TRACKBAR_PAGESIZE, buffer, TEXT("Hz"), TRUE);
 
 	// Adding a radio menu for choosing bit depth. Important that we add these such that the i'th cell indicates i+1 bytes.
 	unsigned int baseRadiosXPos = CHOOSE_FILE_LENGTH_X_POS + 8;
@@ -1455,7 +1690,7 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
 	newFileOptionsHandles->depthOptions[3] = CreateWindow(WC_BUTTON, TEXT("32-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER,
 		baseRadiosXPos + (3 * RADIO_WIDTH), radiosYPos, RADIO_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
 
-	SendMessage(newFileOptionsHandles->depthOptions[1], BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
+	SendMessage(newFileOptionsHandles->depthOptions[newFileOptionsSelections.byteDepth - 1], BM_SETCHECK, BST_CHECKED, 0); // Setting default selection for this menu.
 
 	// Adding buttons for ok and cancel.
 	unsigned int buttonsBaseXPos = (NEW_FILE_OPTIONS_WIDTH - (2 * BUTTON_WIDTH) - GENERIC_SPACING) / 2;
@@ -1513,6 +1748,11 @@ void ApplyNewFileOptions(HWND windowHandle)
 	// Giving the user a chance to save if there is unsaved progress.
 	if (PromptSaveProgress(windowHandle))
 	{
+		// Storing selections for the next time this dialog is popped.
+		newFileOptionsSelections.length = length;
+		newFileOptionsSelections.frequency = frequency;
+		newFileOptionsSelections.byteDepth = byteDepth;
+
 		// Storing this because the pointer to it will be deallocated by CloseNewFileOptions.
 		HWND parent = newFileOptionsHandles->parent;
 		FileInfo* fileInfo;
@@ -1689,16 +1929,16 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
 void SyncTextboxToTrackbar(HWND trackbar, HWND textbox)
 {
 	LRESULT val = (int)SendMessage(trackbar, TBM_GETPOS, 0, 0);
-	TCHAR buffer[16];
+	TCHAR buffer[NUMBER_BUFFER_LEN];
 	_ltot(val, buffer, 10);
 	SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
 }
 
 void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
 {
-	TCHAR buffer[16];
+	TCHAR buffer[NUMBER_BUFFER_LEN];
 	TCHAR* endChar;
-	LRESULT length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
+	LRESULT length = SendMessage(textbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
 	long val = _tcstol(buffer, &endChar, 10);
 
 	// Assigning value to trackbar if the conversion was successful. endChar points to the null terminator iff the conversion is successful or the string is empty.
@@ -1717,16 +1957,16 @@ void SyncTextboxToTrackbarFloat(HWND trackbar, HWND textbox)
 	long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
 	double val = (((double)SendMessage(trackbar, TBM_GETPOS, 0, 0)) - min) / (max - min); // It's assumed that we want to bring the number to the [0, 1] range.
 
-	TCHAR buffer[16];
-	_stprintf_s(buffer, 16, TEXT("%.3f"), val);
+	TCHAR buffer[NUMBER_BUFFER_LEN];
+	_stprintf_s(buffer, NUMBER_BUFFER_LEN, TEXT("%.3f"), val);
 	SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
 }
 
 void SyncTrackbarToTextboxFloat(HWND trackbar, HWND textbox)
 {
-	TCHAR buffer[16];
+	TCHAR buffer[NUMBER_BUFFER_LEN];
 	TCHAR* endChar;
-	LRESULT length = SendMessage(textbox, WM_GETTEXT, 16, (LPARAM)buffer);
+	LRESULT length = SendMessage(textbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
 	double val = _tcstod(buffer, &endChar);
 
 	// Assigning value to trackbar if the conversion was successful. endChar points to the iff the conversion is successful.
@@ -1752,8 +1992,8 @@ LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
 			}
 			else if (wparam == '.') // If the digit is a dot, we want to check if there already is one.
 			{
-				TCHAR buffer[16];
-				SendMessage(windowHandle, WM_GETTEXT, 16, (LPARAM)buffer);
+				TCHAR buffer[NUMBER_BUFFER_LEN];
+				SendMessage(windowHandle, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
 
 				// _tcschr finds the first occurence of a character and returns NULL if it wasn't found. Rejecting this input if it found a dot.
 				if (_tcschr(buffer, TEXT('.')) != NULL)
@@ -1765,6 +2005,12 @@ LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
 		default:
 			return DefSubclassProc(windowHandle, msg, wparam, lparam);
 	}
+}
+
+char IsInWindow(POINT point, HWND window)
+{
+	RECT rect;
+	return GetWindowRect(fileEditor.fourierGraphStatic, &rect) && PtInRect(&rect, point);
 }
 
 #pragma endregion // Misc.

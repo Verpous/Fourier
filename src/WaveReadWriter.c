@@ -436,7 +436,7 @@ ReadWaveResult ValidateFormat(FileInfo* fileInfo)
 
 ReadWaveResult ValidateWaveform(FileInfo* fileInfo)
 {
-	// Caching the sample length and verifying that it's big enough. We need it to be a power of two which divides by two.
+	// Caching the sample length and verifying that it's big enough.
 	if ((fileInfo->sampleLength = CountSampleLength(fileInfo)) < 2)
 	{
 		return FILE_BAD_SAMPLES;
@@ -644,7 +644,7 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 	WORD containerSize = fileInfo->format.contents.Format.wBitsPerSample / 8; // The amount of bytes each sample effectively takes up.
 	WORD byteDepth = fileInfo->format.contents.Format.wFormatTag == WAVE_FORMAT_PCM ? containerSize : fileInfo->format.contents.Samples.wValidBitsPerSample / 8; // The amount of bytes each sample takes up that isn't padding.
 	WORD blockAlign = fileInfo->format.contents.Format.nBlockAlign; // The amount of bytes each block of one sample per channel takes up.
-	unsigned long long paddedLength = NextPowerOfTwo(fileInfo->sampleLength); // The sample length of a channel of data, rounded up to the next power of two.
+	unsigned long long paddedLength = max(MIN_FOURIER_LENGTH, NextPowerOfTwo(fileInfo->sampleLength)); // The sample length of a channel of data, rounded up to the next power of two that is greater/equal to some constant.
 
 	DWORD segmentsLength = fileInfo->waveform.segmentsLength;
 	WaveformSegment* segments = fileInfo->waveform.segments;

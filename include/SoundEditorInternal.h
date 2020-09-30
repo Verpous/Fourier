@@ -35,7 +35,16 @@ void FFT_##type(Function_##type f);																																\
 /* In-place inverse FFT. Assumes function length is a power of two.*/																							\
 void InverseFFT_##type(Function_##type f);
 
+#define SOUND_EDITOR_INTERNAL_H_PRECISION_CONTENTS(precision)																									\
+																																								\
+/* Calculates and returns the k'th twiddle factor for a length N DFT.*/																							\
+/* TODO: mark as inline.*/																																		\
+precision##Complex RootOfUnity_##precision##Complex(unsigned long long, precision##Real);
+
 SOUND_EDITOR_INTERNAL_H_TYPED_CONTENTS(DoubleComplex)
 SOUND_EDITOR_INTERNAL_H_TYPED_CONTENTS(FloatComplex)
+
+SOUND_EDITOR_INTERNAL_H_PRECISION_CONTENTS(Double)
+SOUND_EDITOR_INTERNAL_H_PRECISION_CONTENTS(Float)
 
 #endif

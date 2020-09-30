@@ -22,7 +22,7 @@
 
 int RandRange(int min, int max)
 {
-	return (rand() % (max - min)) + min;
+	return Modulus(rand(), max - min) + min;
 }
 
 long long RandLong()
@@ -210,4 +210,9 @@ char FileExists(LPCTSTR path)
 {
 	WIN32_FIND_DATA data = {0};
 	return FindFirstFile(path, &data) != INVALID_HANDLE_VALUE;
+}
+
+int Modulus(int numerator, int denominator)
+{
+	return ((numerator % denominator) + denominator) % denominator;
 }

@@ -24,10 +24,6 @@
 #include <limits.h>	 // For CHAR_BIT.
 #include <stdio.h>	 // For fprintf.
 
-// TODO: convert to inline function which implements this using sincos, as opposed to cexp.
-#define RootOfUnity_DoubleComplex(k, N) cexp_DoubleComplex((CAST(-2.0 * M_PI, DoubleComplex) * I * (k)) / (N))
-#define RootOfUnity_FloatComplex(k, N) cexp_FloatComplex((CAST(-2.0 * M_PI, FloatComplex) * I * (k)) / (N))
-
 char ApplyModification(unsigned long long fromSample, unsigned long long toSample, ChangeType changeType, double changeAmount, double smoothing, unsigned short channel, Function **channelsData, Modification **modificationStack)
 {
 	// Deallocating changes that were applied and then undone. A new modification means a new branching of the modifications tree, and we are only interested in the path of the tree we're currently on.
@@ -310,9 +306,8 @@ void InverseRealInterleavedFFT(Function* f)
 	}
 }
 
-#define SOUND_EDITOR_C_TYPED_CONTENTS(type)																												\
-																																						\
-void BitReverseArr_##type(Function_##type f)																											\
+#define SOUND_EDITOR_C_PRECISION_CONTENTS(precision)																									\
+void BitReverseArr_##precision##Complex(Function_##precision##Complex f)																				\
 {																																						\
 	unsigned long long len = NumOfSamples(&f);																											\
 	unsigned int digits = CountTrailingZeroes(len);																										\
@@ -324,79 +319,104 @@ void BitReverseArr_##type(Function_##type f)																											\
 		/* Avoiding reversing the same thing twice.*/																									\
 		if (reversed > i)																																\
 		{																																				\
-			type temp = get(f, i);																														\
+			precision##Complex temp = get(f, i);																										\
 			get(f, i) = get(f, reversed);																												\
 			get(f, reversed) = temp;																													\
 		}																																				\
 	}																																					\
 }																																						\
 																																						\
-void RealInterleavedFFT_##type(Function_##type f)																										\
+precision##Complex RootOfUnity_##precision##Complex(unsigned long long k, precision##Real N)															\
+{																																						\
+	precision##Real sine, cosine;																														\
+	sincos_##precision##Real((CAST(-2.0 * M_PI, FloatComplex) * k) / N, &sine, &cosine);																\
+	return cosine + (I * sine);																															\
+}																																						\
+																																						\
+void RealInterleavedFFT_##precision##Complex(Function_##precision##Complex f)																			\
 {																																						\
 	unsigned long long len = NumOfSamples(&f);																											\
-	FFT_##type(f);																																		\
+																																						\
+	/* This number gets used a lot and as a float. So we convert it once to save on conversions later.*/												\
+	precision##Real twoLenReal = 2 * len;																												\
+																																						\
+	FFT_##precision##Complex(f);																														\
 																																						\
 	/* Applying postprocessing to extract the DFT of the original function from the DFT of the interleaved one.*/										\
 	/* The math is according to the document linked in the header for this function.*/																	\
 	/* get(f, 0) is a special case because there is no get(f, len - 0).*/																				\
-	get(f, 0) = CAST(0.5, type) * ((get(f, 0) * CAST(1.0 - I, type)) + (conj_##type(get(f, 0)) * CAST(1.0 + I, type)));									\
+	get(f, 0) = CAST(0.5, precision##Complex) *																											\
+				((get(f, 0) * CAST(1.0 - I, precision##Complex)) + (conj_##precision##Complex(get(f, 0)) * CAST(1.0 + I, precision##Complex)));			\
 																																						\
 	/* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/														\
 	for (unsigned long long k = 1; k < len / 2; k++)																									\
 	{																																					\
-		type fOfK = get(f, k);																															\
-		type fOfLenMinusK = get(f, len - k);																											\
-		type rootK = RootOfUnity_##type(k, 2 * len);																									\
-		type rootLenMinusK = CAST(-1.0, type) / rootK; /* I did some math, and this equals RootOfUnity(len - k, 2 * len)*/								\
-		type val1 = I * rootK, val2 = I * rootLenMinusK;																								\
-		type coeffA1 = CAST(0.5, type) * (CAST(1.0, type) - val1), coeffB1 = CAST(0.5, type) * (CAST(1.0, type) + val1);								\
-		type coeffA2 = CAST(0.5, type) * (CAST(1.0, type) - val2), coeffB2 = CAST(0.5, type) * (CAST(1.0, type) + val2);								\
-		get(f, k) = (fOfK * coeffA1) + (conj_##type(fOfLenMinusK) * coeffB1);																			\
-		get(f, len - k) = (fOfLenMinusK * coeffA2) + (conj_##type(fOfK) * coeffB2);																		\
+		precision##Complex fOfK = get(f, k);																											\
+		precision##Complex fOfLenMinusK = get(f, len - k);																								\
+		precision##Complex rootK = RootOfUnity_##precision##Complex(k, twoLenReal);																		\
+		precision##Complex rootLenMinusK = CAST(-1.0, precision##Complex) / rootK; /* I did some math, and this equals RootOfUnity(len - k, 2 * len)*/	\
+		precision##Complex val1 = I * rootK;																											\
+		precision##Complex val2 = I * rootLenMinusK;																									\
+		precision##Complex coeffA1 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val1);											\
+		precision##Complex coeffB1 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val1);											\
+		precision##Complex coeffA2 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val2);											\
+		precision##Complex coeffB2 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val2);											\
+		get(f, k) = (fOfK * coeffA1) + (conj_##precision##Complex(fOfLenMinusK) * coeffB1);																\
+		get(f, len - k) = (fOfLenMinusK * coeffA2) + (conj_##precision##Complex(fOfK) * coeffB2);														\
 	}																																					\
 }																																						\
 																																						\
-void InverseRealInterleavedFFT_##type(Function_##type f)																								\
+void InverseRealInterleavedFFT_##precision##Complex(Function_##precision##Complex f)																	\
 {																																						\
 	unsigned long long len = NumOfSamples(&f);																											\
+																																						\
+	/* This number gets used a lot and as a float. So we convert it once to save on conversions later.*/												\
+	precision##Complex twoLenReal = 2 * len;																											\
 																																						\
 	/* Applying preprocessing to revert back to the DFT of the interleaved function.*/																	\
 	/* The math is from the same document as the one I used for the forward transform.*/																\
 	/* get(f, 0) is a special case because there is no get(f, len - 0).*/																				\
-	get(f, 0) = CAST(0.5, type) * ((get(f, 0) * CAST(1.0 + I, type)) + (conj_##type(get(f, 0)) * CAST(1.0 - I, type)));									\
+	get(f, 0) = CAST(0.5, precision##Complex) *																											\
+				((get(f, 0) * CAST(1.0 + I, precision##Complex)) + (conj_##precision##Complex(get(f, 0)) * CAST(1.0 - I, precision##Complex)));			\
 																																						\
 	/* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/														\
 	for (unsigned long long k = 1; k < len / 2; k++)																									\
 	{																																					\
-		type fOfK = get(f, k);																															\
-		type fOfLenMinusK = get(f, len - k);																											\
-		type rootK = RootOfUnity_##type(k, 2 * len);																									\
-		type rootLenMinusK = CAST(-1.0, type) / rootK; /* I did some math, and this equals RootOfUnity(len - k, 2 * len)*/								\
-		type val1 = I * rootK, val2 = I * rootLenMinusK;																								\
-		type coeffA1 = conj_##type(CAST(0.5, type) * (CAST(1.0, type) - val1)), coeffB1 = conj_##type(CAST(0.5, type) * (CAST(1.0, type) + val1));		\
-		type coeffA2 = conj_##type(CAST(0.5, type) * (CAST(1.0, type) - val2)), coeffB2 = conj_##type(CAST(0.5, type) * (CAST(1.0, type) + val2));		\
-		get(f, k) = (fOfK * coeffA1) + (conj_##type(fOfLenMinusK) * coeffB1);																			\
-		get(f, len - k) = (fOfLenMinusK * coeffA2) + (conj_##type(fOfK) * coeffB2);																		\
+		precision##Complex fOfK = get(f, k);																											\
+		precision##Complex fOfLenMinusK = get(f, len - k);																								\
+		precision##Complex rootK = RootOfUnity_##precision##Complex(k, twoLenReal);																		\
+		precision##Complex rootLenMinusK = CAST(-1.0, precision##Complex) / rootK; /* I did some math, and this equals RootOfUnity(len - k, 2 * len)*/	\
+		precision##Complex val1 = I * rootK;																											\
+		precision##Complex val2 = I * rootLenMinusK;																									\
+		precision##Complex coeffA1 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val1));					\
+		precision##Complex coeffB1 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val1));					\
+		precision##Complex coeffA2 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val2));					\
+		precision##Complex coeffB2 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val2));					\
+		get(f, k) = (fOfK * coeffA1) + (conj_##precision##Complex(fOfLenMinusK) * coeffB1);																\
+		get(f, len - k) = (fOfLenMinusK * coeffA2) + (conj_##precision##Complex(fOfK) * coeffB2);														\
 	}																																					\
 																																						\
 	/* Now applying inverse FFT. The result will be the original interleaved sequence of even and odd reals (with changes we've applied).*/				\
-	InverseFFT_##type(f);																																\
+	InverseFFT_##precision##Complex(f);																													\
 }																																						\
 																																						\
 /* Most of the comments in this function refer to a picture of the recursion tree the algorithm follows, which I saw here:*/							\
 /* https://www.geeksforgeeks.org/iterative-fast-fourier-transformation-polynomial-multiplication/*/														\
 /* The algorithm itself is a modified version of this: https://stackoverflow.com/a/37729648/12553917. */												\
-void FFT_##type(Function_##type f)																														\
+void FFT_##precision##Complex(Function_##precision##Complex f)																							\
 {																																						\
 	unsigned long long len = NumOfSamples(&f);																											\
 																																						\
 	/* Bit-reversing the array sorts it by the order of the leaves in the recursion tree.*/																\
-	BitReverseArr_##type(f);																															\
+	BitReverseArr_##precision##Complex(f);																												\
 																																						\
 	/* The stride is the length of each sub-tree in the current level.*/																				\
 	/*We start from 2 because the level with length-1 sub-trees is trivial and assumed to already be contained in the array.*/							\
 	unsigned long long stride = 2, halfStride = 1;																										\
 	unsigned int logLen = CountTrailingZeroes(len);																										\
+																																						\
+	/* We keep the version of stride that's converted to a float cached because we use it a lot.*/														\
+	precision##Complex strideReal = stride;																												\
 																																						\
 	/* Each iteration of this loop climbs another level up the recursion tree.*/																		\
 	for (unsigned int j = 0; j < logLen; j++)																											\
@@ -404,43 +424,45 @@ void FFT_##type(Function_##type f)																														\
 		/* Each iteration of this loop moves to the next tree in the current level.*/																	\
 		for (unsigned long long i = 0; i < len; i += stride)																							\
 		{																																				\
+			unsigned long long iPlusHalfStride = i + halfStride; /* Caching repeatedly-used calculation.*/												\
 			/* Each iteration of this loop moves to the next element in the current tree.*/																\
 			/* We only need to iterate over half the elements because in each iteration, we calculate two indices together.*/							\
 			for (unsigned long long k = 0; k < halfStride; k++)																							\
 			{																																			\
 				/* i serves as a sort of "base" for the current tree. i + k is the k'th element in the (i / stride)'th tree of this level.*/			\
-				type evenSum = get(f, i + k);																											\
-				type oddSum = RootOfUnity_##type(k, stride) * get(f, i + k + halfStride); /* TODO: roots of unity can be cached at memory expense.*/	\
+				precision##Complex evenSum = get(f, i + k);																								\
+				precision##Complex oddSum = RootOfUnity_##precision##Complex(k, strideReal) * get(f, iPlusHalfStride + k); /* TODO: cache roots.*/		\
 				get(f, i + k) = evenSum + oddSum;																										\
-				get(f, i + k + halfStride) = evenSum - oddSum;																							\
+				get(f, iPlusHalfStride + k) = evenSum - oddSum;																							\
 			}																																			\
 		}																																				\
 																																						\
 		/* In the next level, trees will be twice as big.*/																								\
 		stride *= 2;																																	\
 		halfStride *= 2;																																\
+		strideReal = stride;																															\
 	}																																					\
 }																																						\
 																																						\
-void InverseFFT_##type(Function_##type f)																												\
+void InverseFFT_##precision##Complex(Function_##precision##Complex f)																					\
 {																																						\
 	unsigned long long len = NumOfSamples(&f);																											\
 																																						\
 	/* Conjugating every sample before applying forward FFT.*/																							\
 	for (unsigned long long i = 0; i < len; i++)																										\
 	{																																					\
-		get(f, i) = conj_##type(get(f, i));																												\
+		get(f, i) = conj_##precision##Complex(get(f, i));																								\
 	}																																					\
 																																						\
 	/* Applying forward fft.*/																															\
-	FFT_##type(f);																																		\
+	FFT_##precision##Complex(f);																														\
 																																						\
 	/* Conjugating again and dividing by the num of samples.*/																							\
 	for (unsigned long long i = 0; i < len; i++)																										\
 	{																																					\
-		get(f, i) = conj_##type(get(f, i)) / len;																										\
+		get(f, i) = conj_##precision##Complex(get(f, i)) / len;																							\
 	}																																					\
 }
 
-SOUND_EDITOR_C_TYPED_CONTENTS(DoubleComplex)
-SOUND_EDITOR_C_TYPED_CONTENTS(FloatComplex)
+SOUND_EDITOR_C_PRECISION_CONTENTS(Double)
+SOUND_EDITOR_C_PRECISION_CONTENTS(Float)

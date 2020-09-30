@@ -11,6 +11,7 @@ typedef enum
 	FREQUENCY_DOMAIN = 1
 } FunctionDomain;
 
+// This struct holds handles to important windows in the new file options dialog so we can reference them.
 typedef struct NewFileOptionsWindow
 {
 	HWND handle;
@@ -22,6 +23,14 @@ typedef struct NewFileOptionsWindow
 	HWND depthOptions[4];
 } NewFileOptionsWindow;
 
+// This file holds the selections from the last occurence of the new file options dialog (or default values if it hasn't been opened yet) so they carry over between newly created files within the same instance of the program.
+typedef struct NewFileOptionsSelections
+{
+	unsigned int length;
+	unsigned int frequency;
+	unsigned int byteDepth;
+} NewFileOptionsSelections;
+
 typedef struct FileEditor
 {
 	FileInfo* fileInfo;					// Info about the file that's being edited, such as its format, size, etc.
@@ -32,6 +41,9 @@ typedef struct FileEditor
 	HBITMAP* fourierGraphs;				// An array of bitmaps including graphs of all the channels' fourier transforms. NULL for channels that aren't drawn yet.
 	unsigned short* fourierGraphsPeaks;	// An array of decibel values to be used as the highest point for the channels' fourier transform graphs.
 	HDC graphingDC;						// The device context used to paint all the waveform and frequency graphs.
+
+	RECT selectionRect;					// The rectangle that is currently selected for frequency modification.
+	char isSelecting;					// True iff the user is currently dragging the mouse around to select frequencies.
 
 	Modification* modificationStack;	// A stack of all the changes the user applies, for undoing and redoing them. Only NULL when no file is open.
 	Modification* currentSaveState;		// The last change that was saved.
@@ -83,8 +95,32 @@ void AddMainWindowControls(HWND);
 // Displays the dialog for selecting a file option.
 void PopSelectFileOptionDialog(HWND);
 
+// Checks if the scrolled window is a trackbar that has a textbox associated with it, and syncs them.
+LRESULT ProcessHScroll(HWND);
+
+// Checks if the mouse was over the fourier graph as the double click took place, and selects everything if it was.
+LRESULT ProcessLMBDoubleClick(LPARAM);
+
+// Checks if the mouse was over the fourier graph as the click took place, and starts selecting if it was.
+LRESULT ProcessLMBDown(LPARAM);
+
+// Ends the selection if one was ongoing.
+LRESULT ProcessLMBUp();
+
+// If a selection is ongoing, updates it.
+LRESULT ProcessMouseMove(LPARAM);
+
+// Carries out WM_NOTIFY messages of any sort.
+LRESULT ProcessNotification(WPARAM, LPNMHDR);
+
+// Checks if the control in question is one of the graphs, and upates their background and foreground colors so they are colored properly.
+LRESULT ProcessControlColorStatic(HDC, HWND);
+
+// Gives the user a chance to save his progress before it is lost if he had any, and then closes the window.
+LRESULT PromptSaveAndClose();
+
 // Carries out WM_COMMAND messages of any sort.
-void ProcessMainWindowCommand(HWND, WPARAM, LPARAM);
+LRESULT ProcessMainWindowCommand(HWND, WPARAM, LPARAM);
 
 // Initiates the procedure of creating a new file.
 void FileNew(HWND);
@@ -151,6 +187,13 @@ void DisplayChannelGraphs(unsigned short);
 
 // Plots and displays both the waveform and fourier transform graphs of a given channel.
 void PlotAndDisplayChannelGraphs(unsigned short);
+
+// Returns the amount of samples to skip in each step when plotting graphs.
+unsigned long long GetPlottingStepSize();
+
+// Paints the given frequency selection on the graph given the range of pixels to color [inclusive, exclusive).
+// If from > to, it is treated as if they were swapped. If from == to, the old selection is erased but no new one is painted. From and to are clamped into the valid range of pixels.
+void PaintSelection(LONG, LONG);
 
 // Deallocates memory allocated for file editing and erases the editor from the window.
 void CloseFileEditor();
@@ -223,5 +266,8 @@ void SyncTrackbarToTextboxFloat(HWND, HWND);
 
 // Procedure for textboxes that only accept float numbers.
 LRESULT CALLBACK FloatTextboxWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
+// Returns nonzero iff the point is within the bounds of the given window.
+char IsInWindow(POINT, HWND);
 
 #endif

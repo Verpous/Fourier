@@ -15,6 +15,9 @@
 #define MAX_NAMED_CHANNELS 18
 #define CHANNEL_NAME_BUFFER_LEN 24
 
+// If a file has fewer samples than this, it's zero-padded to reach this length.
+#define MIN_FOURIER_LENGTH (1 << 16)
+
 #define ResultHasError(x) (0x0000FFFF & (x))
 #define ResultHasWarning(x) (0xFFFF0000 & (x))
 #define ResultErrorCode(x) ResultHasError(x)

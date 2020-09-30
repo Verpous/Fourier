@@ -44,6 +44,12 @@ typedef float FloatReal;
 #define cos_FloatReal(x) cosf(x)
 #define cos_DoubleReal(x) cos(x)
 
+#define sin_FloatReal(x) sinf(x)
+#define sin_DoubleReal(x) sin(x)
+
+#define sincos_FloatReal(x, s, c) sincosf(x, s, c)
+#define sincos_DoubleReal(x, s, c) sincos(x, s, c)
+
 #define ceil_FloatReal(x) ceilf(x)
 #define ceil_DoubleReal(x) ceil(x)
 
@@ -84,7 +90,7 @@ Function_##type *CreatePartialClone_##type(Function_##type*, unsigned long long,
 /* Copies the samples from the source function to the destination function, from their given starting points.*/																\
 void CopySamples_##type(Function_##type, Function_##type, unsigned long long, unsigned long long, unsigned long long);														\
 																																											\
-/* Returns the biggest sample between startIndex (inclusive) and endIndex (exclusive).*/																					\
+/* Returns the biggest sample between two indices [inclusive, exclusive), while skipping over samples according to the given step size.*/									\
 type GetMax_##type(Function_##type, unsigned long long, unsigned long long, unsigned long long);																			\
 																																											\
 /* Returns the smallest sample between startIndex (inclusive) and endIndex (exclusive).*/																					\

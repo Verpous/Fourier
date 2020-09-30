@@ -47,7 +47,7 @@ float ClampFloat(float, float, float);
 // Clamps a double-precision float between two values.
 double ClampDouble(double, double, double);
 
-// Clamps an integer between two values.
+// Clamps an integer between two values [inclusive, inclusive].
 long long ClampInt(long long, long long, long long);
 
 // Returns the square magnitude of a single-precision float complex.
@@ -85,5 +85,8 @@ unsigned long long NextPowerOfTwo(unsigned long long);
 
 // Returns TRUE iff a file with the given path (path includes the filename) exists.
 char FileExists(LPCTSTR path);
+
+// The C '%' operator is the remainder, so this does modulus.
+int Modulus(int, int);
 
 #endif
