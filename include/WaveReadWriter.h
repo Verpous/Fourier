@@ -117,4 +117,10 @@ unsigned short GetChannelNames(FileInfo*, TCHAR[][CHANNEL_NAME_BUFFER_LEN]);
 // Returns how many editable channels are in this file.
 unsigned short GetRelevantChannelsCount(FileInfo*);
 
+// Returns the nyquist frequency floored to int.
+unsigned int GetNyquistInt(FileInfo*);
+
+// Returns the nyquist frequency as a double.
+double GetNyquistDouble(FileInfo*);
+
 #endif

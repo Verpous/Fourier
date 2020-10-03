@@ -69,18 +69,18 @@
 #define TRACKBAR_TICKS 11
 
 // The size of buffer that we use when parsing numbers to and from strings.
-#define NUMBER_BUFFER_LEN 16
+#define NUMBER_BUFFER_LEN 32
 
 // Dimensions of windows. Everything is in pixels.
-#define MAIN_WINDOW_WIDTH 1152 // Used to be 850
-#define MAIN_WINDOW_HEIGHT 864 // Used to be 700
-#define NEW_FILE_OPTIONS_WIDTH 380
+#define MAIN_WINDOW_WIDTH 1152
+#define MAIN_WINDOW_HEIGHT 864
+#define NEW_FILE_OPTIONS_WIDTH 420
 #define NEW_FILE_OPTIONS_HEIGHT 220
 #define SELECT_FILE_OPTION_WIDTH 330
 #define SELECT_FILE_OPTION_HEIGHT 120
 
 // Dimensions of controls. Everything is in pixels.
-#define INPUT_TEXTBOX_WIDTH 90
+#define INPUT_TEXTBOX_WIDTH 110
 #define INPUT_TEXTBOX_HEIGHT 22
 #define STATIC_TEXT_HEIGHT 16
 #define STATIC_UNITS_WIDTH 50
@@ -89,7 +89,7 @@
 #define TRACKBAR_HEIGHT 30
 #define BUTTON_WIDTH 70
 #define BUTTON_HEIGHT 35
-#define RADIO_WIDTH 94
+#define RADIO_WIDTH 100
 #define GRAPH_WIDTH (MAIN_WINDOW_WIDTH - 130) // We want the graph to take up as much as it can of the screen while still looking good.
 #define GRAPH_HEIGHT 235 // This should be an odd number because we divide (GRAPH_HEIGHT - 1) by 2 and so there's as many pixels above 0 as below.
 #define CONTROL_DESCRIPTION_WIDTH 80
@@ -123,9 +123,10 @@
 #define WAVEFORM_FOREGROUND_COLOR RGB(217, 87, 0)
 #define FOURIER_BACKGROUND_COLOR WAVEFORM_BACKGROUND_COLOR
 #define FOURIER_FOREGROUND_COLOR RGB(157, 0, 51)
+#define FOURIER_SELECTION_COLOR RGB(72, 4, 104)
 
 // How many characters are allowed in input controls for numbers (which is all of them).
-#define INPUT_TEXTBOX_CHARACTER_LIMIT 8
+#define INPUT_TEXTBOX_CHARACTER_LIMIT 11
 
 // WindowClass names.
 #define WC_MAINWINDOW TEXT("MainWindow")
@@ -206,6 +207,7 @@ char RegisterMainWindowClass(HINSTANCE instanceHandle)
 	mainWindowClass.lpszClassName = WC_MAINWINDOW;
 	mainWindowClass.lpfnWndProc = MainWindowProcedure;
 	mainWindowClass.hIcon = programIcon;
+	mainWindowClass.style = CS_DBLCLKS;
 
 	// Registering this class. If it fails, we'll log it and end the program.
 	if (!RegisterClass(&mainWindowClass))
@@ -283,7 +285,9 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 		case WM_LBUTTONDOWN:
 			return ProcessLMBDown(lparam);
 		case WM_LBUTTONUP:
-			return ProcessLMBUp();
+			return ProcessLMBUp(lparam);
+		case WM_RBUTTONUP:
+			return ProcessRMBUp(lparam);
 		case WM_MOUSEMOVE:
 			return ProcessMouseMove(lparam);
 		case WM_NOTIFY:
@@ -342,7 +346,6 @@ void PopSelectFileOptionDialog(HWND windowHandle)
 	EnableWindow(windowHandle, FALSE);
 }
 
-
 LRESULT ProcessHScroll(HWND scrolledWindow)
 {
 	// Updating the textbox to match the trackbar.
@@ -360,11 +363,13 @@ LRESULT ProcessLMBDoubleClick(LPARAM lparam)
 	{
 		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
 
-		// We begin selecting from this point, but only if the point that was pressed is inside the fourier graph static's bounds.
+		// We only select things if the point that was pressed is inside the fourier graph static's bounds.
 		if (IsInWindow(point, fileEditor.fourierGraphStatic))
 		{
-			// The user double-clicked while hovering over the fourier graph. Selecting everything.
-			PaintSelection(0, GRAPH_WIDTH);
+			// Selecting the whole spectrum.
+			SetTextboxDouble(fileEditor.fromFreqTextbox, 0.0, FALSE);
+			SetTextboxDouble(fileEditor.toFreqTextbox, GetNyquistDouble(fileEditor.fileInfo), FALSE);
+			UpdateSelection();
 		}
 	}
 
@@ -379,18 +384,27 @@ LRESULT ProcessLMBDown(LPARAM lparam)
 
 		// We begin selecting from this point, but only if the point that was pressed is inside the fourier graph static's bounds.
 		if (IsInWindow(point, fileEditor.fourierGraphStatic))
-		{
+		{	
 			// Mapping the point where the button was pressed down into local coordinates of the fourier graph static.
 			int mapping = MapWindowPoints(mainWindowHandle, fileEditor.fourierGraphStatic, &point, 1);
 
 			// MapWindowPoints returns 0 on failure. It can also sometimes return 0 on success, but not in our case so we don't check for it.
 			if (mapping != 0)
 			{
-				PaintSelection(point.x, point.x);
 				fileEditor.isSelecting = TRUE;
+
+				// In order to prevent the user from also being able to type frequencies into the textbox while he's dragging, we steal the focus.
+				SetFocus(mainWindowHandle);
 
 				// In order to guarantee that we'll receive an LBUTTONUP message even if the window loses focus, we must capture the mouse.
 				SetCapture(mainWindowHandle);
+
+				// Storing the clicked point as the pivot point for this selection, and setting the selection to be from this pivot point to itself.
+				double nyquist = GetNyquistDouble(fileEditor.fileInfo);
+				fileEditor.selectionPivot = ClampDouble((point.x * nyquist) / (GRAPH_WIDTH - 1.0), 0.0, nyquist);
+				SetTextboxDouble(fileEditor.fromFreqTextbox, fileEditor.selectionPivot, FALSE);
+				SetTextboxDouble(fileEditor.toFreqTextbox, fileEditor.selectionPivot, FALSE);
+				UpdateSelection();
 			}
 		}
 	}
@@ -398,12 +412,30 @@ LRESULT ProcessLMBDown(LPARAM lparam)
 	return 0;
 }
 
-LRESULT ProcessLMBUp()
+LRESULT ProcessLMBUp(LPARAM lparam)
 {
 	if (fileEditor.isSelecting)
 	{
 		fileEditor.isSelecting = FALSE;
 		ReleaseCapture();
+	}
+
+	return 0;
+}
+
+LRESULT ProcessRMBUp(LPARAM lparam)
+{
+	if (fileEditor.fileInfo != NULL && !fileEditor.isSelecting)
+	{
+		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
+
+		// We begin selecting from this point, but only if the point that was pressed is inside the fourier graph static's bounds.
+		if (IsInWindow(point, fileEditor.fourierGraphStatic))
+		{	
+			SetTextboxDouble(fileEditor.fromFreqTextbox, NAN, FALSE);
+			SetTextboxDouble(fileEditor.toFreqTextbox, NAN, FALSE);
+			UpdateSelection();
+		}
 	}
 
 	return 0;
@@ -419,7 +451,23 @@ LRESULT ProcessMouseMove(LPARAM lparam)
 		// MapWindowPoints returns 0 on failure. It can also sometimes return 0 on success, but not in our case so we don't check for it.
 		if (mapping != 0)
 		{
-			// TODO: when selection starts, store the point at which it starts. All future selections originate from that point.
+			// Setting the selection to go from the pivot to the current pressed point.
+			double nyquist = GetNyquistDouble(fileEditor.fileInfo);
+			double pointFreq = ClampDouble((point.x * nyquist) / (GRAPH_WIDTH - 1.0), 0.0, nyquist);
+			
+			// Deciding which textbox gets what value.
+			if (pointFreq < fileEditor.selectionPivot)
+			{
+				SetTextboxDouble(fileEditor.fromFreqTextbox, pointFreq, FALSE);
+				SetTextboxDouble(fileEditor.toFreqTextbox, fileEditor.selectionPivot, FALSE);
+			}
+			else
+			{
+				SetTextboxDouble(fileEditor.fromFreqTextbox, fileEditor.selectionPivot, FALSE);
+				SetTextboxDouble(fileEditor.toFreqTextbox, pointFreq, FALSE);
+			}
+
+			UpdateSelection();
 		}
 	}
 
@@ -446,21 +494,16 @@ LRESULT ProcessNotification(WPARAM wparam, LPNMHDR nmhdr)
 
 LRESULT ProcessControlColorStatic(HDC controlHDC, HWND controlWindow)
 {
-	// We change the foreground and background colors of the graph static controls so that graphs are painted with the appropriate colors.
+	// We change the foreground and background colors of the waveform static control so that it's painted with the appropriate colors.
+	// The fourier graph has its WM_PAINT message subclassed so it handles this there.
 	if (controlWindow == fileEditor.waveformGraphStatic)
 	{
 		SetBkColor(controlHDC, WAVEFORM_BACKGROUND_COLOR);
 		SetTextColor(controlHDC, WAVEFORM_FOREGROUND_COLOR);
 		return (LRESULT)GetStockObject(WHITE_BRUSH);
 	}
-	else if (controlWindow == fileEditor.fourierGraphStatic)
-	{
-		SetBkColor(controlHDC, FOURIER_BACKGROUND_COLOR);
-		SetTextColor(controlHDC, FOURIER_FOREGROUND_COLOR);
-		return (LRESULT)GetStockObject(WHITE_BRUSH);
-	}
 
-	return DefWindowProc(mainWindowHandle, WM_CTLCOLORSTATIC, controlHDC, controlWindow);
+	return DefWindowProc(mainWindowHandle, WM_CTLCOLORSTATIC, (WPARAM)controlHDC, (LPARAM)controlWindow);
 }
 
 LRESULT PromptSaveAndClose()
@@ -499,7 +542,7 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 					break;
 			}
 
-		break;
+			break;
 		case ACCELERATOR_SHORTCUT_PRESSED:
 		
 			// Generating a menu button pressed event same as for BN_CLICKED, but only when this is the active window.
@@ -510,8 +553,7 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 
 			break;
 		case EN_UPDATE: // EN_UPDATE is sent before the screen gets updated, EN_CHANGE gets sent after.
-			;
-			HWND focusedWindow = GetFocus();
+			;HWND focusedWindow = GetFocus();
 			HWND controlHandle = (HWND)lparam;
 
 			// Only matching the trackbar to the textbox when it's in fact the textbox that changed,
@@ -519,6 +561,11 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 			if (focusedWindow == fileEditor.smoothingTextbox && controlHandle == fileEditor.smoothingTextbox)
 			{
 				SyncTrackbarToTextboxFloat(fileEditor.smoothingTrackbar, fileEditor.smoothingTextbox);
+			}
+			else if ((focusedWindow == fileEditor.fromFreqTextbox && controlHandle == fileEditor.fromFreqTextbox) ||
+					(focusedWindow == fileEditor.toFreqTextbox && controlHandle == fileEditor.toFreqTextbox))
+			{
+				UpdateSelection();
 			}
 
 			break;
@@ -832,26 +879,21 @@ void ApplyModificationFromInput(HWND windowHandle)
 	{
 		return;
 	}
-	
-	TCHAR buffer[NUMBER_BUFFER_LEN];
-	TCHAR* endChar;
 
 	// First reading the from frequency.
-	LRESULT length = SendMessage(fileEditor.fromFreqTextbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
-	double fromFreq = _tcstod(buffer, &endChar);
+	double fromFreq = GetTextboxDouble(fileEditor.fromFreqTextbox);
 
 	// This condition is met when the float couldn't be parsed from the string.
-	if (length == 0 || endChar != &(buffer[length]))
+	if (isnan(fromFreq))
 	{
 		MessageBox(windowHandle, TEXT("Invalid input in 'From' textbox."), NULL, MB_OK | MB_ICONERROR);
 		return;
 	}
 
 	// Now reading to frequency.
-	length = SendMessage(fileEditor.toFreqTextbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
-	double toFreq = _tcstod(buffer, &endChar);
+	double toFreq = GetTextboxDouble(fileEditor.toFreqTextbox);
 
-	if (length == 0 || endChar != &(buffer[length]))
+	if (isnan(toFreq))
 	{
 		MessageBox(windowHandle, TEXT("Invalid input in 'To' textbox."), NULL, MB_OK | MB_ICONERROR);
 		return;
@@ -862,10 +904,9 @@ void ApplyModificationFromInput(HWND windowHandle)
 	ChangeType changeType = changeSelection == 0 ? MULTIPLY : ADD;
 
 	// Reading the change amount. If the user selected the "subtract" option, I multiply the amount by -1.
-	length = SendMessage(fileEditor.changeAmountTextbox, WM_GETTEXT, NUMBER_BUFFER_LEN, (LPARAM)buffer);
-	double changeAmount = _tcstod(buffer, &endChar) * (changeSelection == 2 ? -1.0 : 1.0);
+	double changeAmount = GetTextboxDouble(fileEditor.changeAmountTextbox) * (changeSelection == 2 ? -1.0 : 1.0);
 
-	if (length == 0 || endChar != &(buffer[length]))
+	if (isnan(changeAmount))
 	{
 		MessageBox(windowHandle, TEXT("Invalid input in 'Amount' textbox."), NULL, MB_OK | MB_ICONERROR);
 		return;
@@ -899,7 +940,7 @@ void ApplyModificationFromInput(HWND windowHandle)
 	if (!(1 <= fromFreqInt && fromFreqInt < totalSamples / 2) || !(1 <= toFreqInt && toFreqInt < totalSamples / 2))
 	{
 		TCHAR msg[64];
-		_stprintf_s(msg, 64, TEXT("Frequencies to modify must be between 0 and %u."), fileEditor.fileInfo->format.contents.Format.nSamplesPerSec);
+		_stprintf_s(msg, 64, TEXT("Frequencies to modify must be between 0 and %g."), GetNyquistDouble(fileEditor.fileInfo));
 		MessageBox(windowHandle, msg, NULL, MB_OK | MB_ICONERROR);
 		return;
 	}
@@ -1043,8 +1084,9 @@ void PaintFileEditorPermanents()
 	fileEditor.maxFreqStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | SS_CENTER,
 		fourierFrequencyUnitsBaseXPos + GRAPH_WIDTH, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | SS_BITMAP, graphXPos, fourierGraphYPos, GRAPH_WIDTH, GRAPH_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
-	fileEditor.selectionRect.bottom = GRAPH_HEIGHT; 
+	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER,
+		graphXPos, fourierGraphYPos, GRAPH_WIDTH + 2, GRAPH_HEIGHT + 2, mainWindowHandle, NULL, NULL, NULL); // The +2 adds room for the border. The waveform graph does this automatically because of the SS_BITMAP style.
+	SetWindowSubclass(fileEditor.fourierGraphStatic, FourierGraphWindowProc, 0, 0); // We subclass the window so we can paint selections on it.
 
 	// Adding GUI for choosing what frequency to modify.
 	unsigned int chooseFrequenciesYPos = fourierGraphYPos + GRAPH_HEIGHT + INPUTS_Y_SPACING;
@@ -1143,7 +1185,7 @@ void PaintFileEditorTemporaries()
 	UpdateWindowTitle();
 	PlotAndDisplayChannelGraphs(0);
 
-	unsigned int nyquist = fileEditor.fileInfo->format.contents.Format.nSamplesPerSec / 2;
+	unsigned int nyquist = GetNyquistInt(fileEditor.fileInfo);
 
 	// If the nyquist frequency is below 1000, the x axis is in hertz.
 	if (1000 >= nyquist)
@@ -1433,8 +1475,8 @@ void DisplayChannelFourier(unsigned short channel)
 	TCHAR buffer[NUMBER_BUFFER_LEN];
 	_ultot_s(fileEditor.fourierGraphsPeaks[channel], buffer, NUMBER_BUFFER_LEN, 10);
 	_tcscat_s(buffer, NUMBER_BUFFER_LEN, TEXT("dB"));
-	SendMessage(fileEditor.fourierGraphStatic, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)fileEditor.fourierGraphs[channel]);
 	SendMessage(fileEditor.fourierMaxStatic, WM_SETTEXT, 0, (LPARAM)buffer);
+	UpdateSelection(); // This triggers a repainting of the fourier graph static, with selection if there is any.
 }
 
 void DisplayChannelGraphs(unsigned short channel)
@@ -1464,27 +1506,10 @@ unsigned long long GetPlottingStepSize()
 	return ClampInt(fileEditor.fileInfo->sampleLength / START_INCREASING_STEP_SIZE_THRESHOLD, 1, topClamp);
 }
 
-void PaintSelection(LONG from, LONG to)
+void UpdateSelection()
 {
-	if (from > to)
-	{
-		LONG temp = from;
-		from = to;
-		to = temp;
-	}
-	
-	from = ClampInt(from, 0, GRAPH_WIDTH - 1);
-	to = ClampInt(from, 1, GRAPH_WIDTH);
-	
-	if (from == to)
-	{
-		to++;
-	}
-
-	// TODO: erase no-longer-selected parts of the old selection, paint newly selected ones.
-
-	fileEditor.selectionRect.left = from;
-	fileEditor.selectionRect.right = to;
+	InvalidateRect(fileEditor.fourierGraphStatic, NULL, FALSE);
+	UpdateWindow(fileEditor.fourierGraphStatic);
 }
 
 void CloseFileEditor()
@@ -1510,8 +1535,7 @@ void CloseFileEditor()
 		ReleaseCapture();
 		fileEditor.isSelecting = FALSE;
 	}
-	
-	PaintSelection(0, 0);
+
 	UpdateUndoRedoState();
 }
 
@@ -1956,13 +1980,24 @@ void SyncTextboxToTrackbarFloat(HWND trackbar, HWND textbox)
 	long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
 	long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
 	double val = (((double)SendMessage(trackbar, TBM_GETPOS, 0, 0)) - min) / (max - min); // It's assumed that we want to bring the number to the [0, 1] range.
-
-	TCHAR buffer[NUMBER_BUFFER_LEN];
-	_stprintf_s(buffer, NUMBER_BUFFER_LEN, TEXT("%.3f"), val);
-	SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
+	SetTextboxDouble(textbox, val, TRUE);
 }
 
 void SyncTrackbarToTextboxFloat(HWND trackbar, HWND textbox)
+{
+	double val = GetTextboxDouble(textbox);
+
+	// Assigning value to trackbar if the conversion was successful.
+	if (!isnan(val))
+	{
+		long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
+		long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
+		val = ClampDouble(min + (val * (max - min)), min, max); // Scaling val and clamping it. It's assumed that val is in [0,1] and we want to scale it to [min, max].
+		SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (long)val);
+	}
+}
+
+double GetTextboxDouble(HWND textbox)
 {
 	TCHAR buffer[NUMBER_BUFFER_LEN];
 	TCHAR* endChar;
@@ -1970,13 +2005,41 @@ void SyncTrackbarToTextboxFloat(HWND trackbar, HWND textbox)
 	double val = _tcstod(buffer, &endChar);
 
 	// Assigning value to trackbar if the conversion was successful. endChar points to the iff the conversion is successful.
-	if (length != 0 && endChar == &(buffer[length]))
+	if (length == 0 || endChar != &(buffer[length]))
 	{
-		long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
-		long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
-		val = ClampDouble(min + (val * (max - min)), min, max); // Scaling val and clamping it. It's assumed that val is in [0,1] and we want to scale it to [min, max].
-		SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (long)val);
+		return NAN;
 	}
+
+	return val;
+}
+
+void SetTextboxDouble(HWND textbox, double val, char truncate)
+{
+	TCHAR buffer[NUMBER_BUFFER_LEN];
+
+	// Using the empty string for NaNs.
+	if (isnan(val))
+	{
+		buffer[0] = TEXT('\0');
+	}
+	else if (truncate)
+	{
+		_stprintf_s(buffer, NUMBER_BUFFER_LEN, TEXT("%.3f"), val);
+	}
+	else
+	{
+		_stprintf_s(buffer, NUMBER_BUFFER_LEN, TEXT("%g"), val);
+
+		// This is sort of hacky but what it does is it lets us reap the benefits of %g removing trailing zeroes without the scientific notation which isn't parsed by ApplyModificationFromInput.
+		// The threshold at which %g starts using scientific notation wasn't so clear so I decided this is the simplest way.
+		if (IsScientificNotation(buffer))
+		{
+			// Numbers in scientific notation tend to be quite large so we fully truncate decimal digits.
+			_stprintf_s(buffer, NUMBER_BUFFER_LEN, TEXT("%.0f"), val);
+		}
+	}
+
+	SendMessage(textbox, WM_SETTEXT, 0, (LPARAM)buffer);
 }
 
 LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR subclassId, DWORD_PTR refData)
@@ -2007,10 +2070,77 @@ LRESULT CALLBACK FloatTextboxWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
 	}
 }
 
+LRESULT CALLBACK FourierGraphWindowProc(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam, UINT_PTR subclassId, DWORD_PTR refData)
+{
+	switch (msg)
+	{
+		case WM_PAINT:
+			;PAINTSTRUCT ps;
+			HDC dc = BeginPaint(windowHandle, &ps);
+			unsigned short channel = TabCtrl_GetCurSel(fileEditor.channelTabs);
+
+			if (fileEditor.fourierGraphs[channel] != NULL)
+			{
+				HBRUSH selectionColorBrush = CreateSolidBrush(FOURIER_SELECTION_COLOR);
+				HBRUSH oldBrush = SelectBrush(dc, selectionColorBrush);
+				HGDIOBJ oldSelection = SelectObject(fileEditor.graphingDC, fileEditor.fourierGraphs[channel]);
+				COLORREF oldBkColor = SetBkColor(dc, FOURIER_BACKGROUND_COLOR);
+				COLORREF oldTextColor = SetTextColor(dc, FOURIER_FOREGROUND_COLOR);
+
+				// Painting on the graph.
+				BitBlt(dc, 0, 0, GRAPH_WIDTH, GRAPH_HEIGHT, fileEditor.graphingDC, 0, 0, SRCCOPY);
+
+				// Painting on the current selection.
+				double from = GetTextboxDouble(fileEditor.fromFreqTextbox);
+				double to = GetTextboxDouble(fileEditor.toFreqTextbox);
+
+				if (!isnan(from) && !isnan(to) && from <= to)
+				{
+					double nyquist = GetNyquistDouble(fileEditor.fileInfo);
+					int fromPixel = ClampInt((from / nyquist) * (GRAPH_WIDTH - 1),  0, GRAPH_WIDTH - 1);
+					int toPixel = ClampInt((to / nyquist) * GRAPH_WIDTH, 0, GRAPH_WIDTH);
+					BitBlt(dc, fromPixel, 0, toPixel - fromPixel, GRAPH_HEIGHT, NULL, 0, 0, PATINVERT);
+				}
+
+				SetTextColor(dc, oldTextColor);
+				SetBkColor(dc, oldBkColor);
+				SelectObject(fileEditor.graphingDC, oldSelection);
+				SelectBrush(dc, oldBrush);
+				DeleteBrush(selectionColorBrush);
+			}
+
+			EndPaint(windowHandle, &ps);
+			return 0;
+		case WM_ERASEBKGND: // Since WM_PAINT repaints the whole window, WM_ERASEBKGND is useless and said to cause flickering so we override it to do nothing.
+			return 1;
+		default:
+			return DefSubclassProc(windowHandle, msg, wparam, lparam);
+	}
+}
+
+
 char IsInWindow(POINT point, HWND window)
 {
 	RECT rect;
-	return GetWindowRect(fileEditor.fourierGraphStatic, &rect) && PtInRect(&rect, point);
+
+	if (!GetWindowRect(fileEditor.fourierGraphStatic, &rect))
+	{
+		return FALSE;
+	}
+
+	POINT topLeft = { .x = rect.left, .y = rect.top };
+	
+	if (!ScreenToClient(mainWindowHandle, &topLeft))
+	{
+		return FALSE;
+	}
+
+	rect.right = topLeft.x + (rect.right - rect.left);
+	rect.bottom = topLeft.y + (rect.bottom - rect.top);
+	rect.left = topLeft.x;
+	rect.top = topLeft.y;
+
+	return PtInRect(&rect, point);
 }
 
 #pragma endregion // Misc.

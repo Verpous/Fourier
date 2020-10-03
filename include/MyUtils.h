@@ -89,4 +89,10 @@ char FileExists(LPCTSTR path);
 // The C '%' operator is the remainder, so this does modulus.
 int Modulus(int, int);
 
+// The mathematical sign function.
+int Sign(int);
+
+// Returns nonzero iff the string represents a float in scientific notation. If the string doesn't contain a float in any representation, the behavior is undefined.
+char IsScientificNotation(TCHAR*);
+
 #endif

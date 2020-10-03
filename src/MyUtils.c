@@ -216,3 +216,13 @@ int Modulus(int numerator, int denominator)
 {
 	return ((numerator % denominator) + denominator) % denominator;
 }
+
+int Sign(int num)
+{
+	return num > 0 ? 1 : num == 0 ? 0 : -1;
+}
+
+char IsScientificNotation(TCHAR* str)
+{
+		return _tcsstr(str, TEXT("e+")) != NULL || _tcsstr(str, TEXT("e-")) != NULL;
+}

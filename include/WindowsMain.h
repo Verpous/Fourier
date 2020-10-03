@@ -42,8 +42,8 @@ typedef struct FileEditor
 	unsigned short* fourierGraphsPeaks;	// An array of decibel values to be used as the highest point for the channels' fourier transform graphs.
 	HDC graphingDC;						// The device context used to paint all the waveform and frequency graphs.
 
-	RECT selectionRect;					// The rectangle that is currently selected for frequency modification.
 	char isSelecting;					// True iff the user is currently dragging the mouse around to select frequencies.
+	double selectionPivot;				// While isSelecting is true, this contains the frequency at which the selection started.
 
 	Modification* modificationStack;	// A stack of all the changes the user applies, for undoing and redoing them. Only NULL when no file is open.
 	Modification* currentSaveState;		// The last change that was saved.
@@ -105,7 +105,10 @@ LRESULT ProcessLMBDoubleClick(LPARAM);
 LRESULT ProcessLMBDown(LPARAM);
 
 // Ends the selection if one was ongoing.
-LRESULT ProcessLMBUp();
+LRESULT ProcessLMBUp(LPARAM lparam);
+
+// Erases the current selection if the mouse was hovering over the graph.
+LRESULT ProcessRMBUp(LPARAM lparam);
 
 // If a selection is ongoing, updates it.
 LRESULT ProcessMouseMove(LPARAM);
@@ -113,7 +116,7 @@ LRESULT ProcessMouseMove(LPARAM);
 // Carries out WM_NOTIFY messages of any sort.
 LRESULT ProcessNotification(WPARAM, LPNMHDR);
 
-// Checks if the control in question is one of the graphs, and upates their background and foreground colors so they are colored properly.
+// Checks if the control in question is the waveform graph, and updates its background and foreground colors so it's colored properly.
 LRESULT ProcessControlColorStatic(HDC, HWND);
 
 // Gives the user a chance to save his progress before it is lost if he had any, and then closes the window.
@@ -191,9 +194,8 @@ void PlotAndDisplayChannelGraphs(unsigned short);
 // Returns the amount of samples to skip in each step when plotting graphs.
 unsigned long long GetPlottingStepSize();
 
-// Paints the given frequency selection on the graph given the range of pixels to color [inclusive, exclusive).
-// If from > to, it is treated as if they were swapped. If from == to, the old selection is erased but no new one is painted. From and to are clamped into the valid range of pixels.
-void PaintSelection(LONG, LONG);
+// Paints the selection, sets the textboxes to contain it, and sets the new values in fileEditor.
+void UpdateSelection();
 
 // Deallocates memory allocated for file editing and erases the editor from the window.
 void CloseFileEditor();
@@ -264,8 +266,17 @@ void SyncTextboxToTrackbarFloat(HWND, HWND);
 // Sets the trackbar position to the value written in the textbox, converted from [0,1] to the trackbar's range.
 void SyncTrackbarToTextboxFloat(HWND, HWND);
 
+// Takes a textbox handle and returns the number inside parsed to double. Returns NaN if the number couldn't be parsed.
+double GetTextboxDouble(HWND);
+
+// Takes a textbox handle and sets its text to the given double. If the number is NaN, the textbox is emptied. The float is truncated to 3 decimal digits if the truncate argument is set.
+void SetTextboxDouble(HWND, double, char);
+
 // Procedure for textboxes that only accept float numbers.
 LRESULT CALLBACK FloatTextboxWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+
+// Procedure for the fourier graph static.
+LRESULT CALLBACK FourierGraphWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
 
 // Returns nonzero iff the point is within the bounds of the given window.
 char IsInWindow(POINT, HWND);

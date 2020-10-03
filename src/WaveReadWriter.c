@@ -954,3 +954,13 @@ unsigned short GetRelevantChannelsCount(FileInfo* fileInfo)
 {
 	return min(fileInfo->format.contents.Format.nChannels, MAX_NAMED_CHANNELS);
 }
+
+unsigned int GetNyquistInt(FileInfo* fileInfo)
+{
+	return fileInfo->format.contents.Format.nSamplesPerSec / 2;
+}
+
+double GetNyquistDouble(FileInfo* fileInfo)
+{
+	return fileInfo->format.contents.Format.nSamplesPerSec / 2.0;
+}
