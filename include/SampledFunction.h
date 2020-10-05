@@ -53,14 +53,23 @@ typedef float FloatReal;
 #define ceil_FloatReal(x) ceilf(x)
 #define ceil_DoubleReal(x) ceil(x)
 
+#define llceil_FloatReal(x) llroundf(ceilf(x))
+#define llceil_DoubleReal(x) llround(ceil(x))
+
 #define floor_FloatReal(x) floorf(x)
 #define floor_DoubleReal(x) floor(x)
+
+#define llfloor_FloatReal(x) llroundf(floorf(x))
+#define llfloor_DoubleReal(x) llround(floor(x))
 
 #define abs_FloatReal(x) fabsf(x)
 #define abs_DoubleReal(x) fabs(x)
 
 #define lround_FloatReal(x) lroundf(x)
 #define lround_DoubleReal(x) lround(x)
+
+#define llround_FloatReal(x) llroundf(x)
+#define llrond_DoubleReal(x) llround(x)
 
 #define log10_FloatReal(x) log10f(x)
 #define log10_DoubleReal(x) log10(x)
@@ -85,7 +94,7 @@ char AllocateFunctionInternals_##type(Function_##type*, unsigned long long);				
 void DeallocateFunctionInternals_##type(Function_##type*);																													\
 																																											\
 /* Clones the source function in the given sample range.*/																													\
-Function_##type *CreatePartialClone_##type(Function_##type*, unsigned long long, unsigned long long);																		\
+Function_##type* CreatePartialClone_##type(Function_##type*, unsigned long long, unsigned long long);																		\
 																																											\
 /* Copies the samples from the source function to the destination function, from their given starting points.*/																\
 void CopySamples_##type(Function_##type, Function_##type, unsigned long long, unsigned long long, unsigned long long);														\

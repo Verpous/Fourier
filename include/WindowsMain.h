@@ -125,6 +125,9 @@ LRESULT PromptSaveAndClose();
 // Carries out WM_COMMAND messages of any sort.
 LRESULT ProcessMainWindowCommand(HWND, WPARAM, LPARAM);
 
+// Sets the file editor to the currently selected channel in the tab control.
+void UpdateEditorToCurrentChannel();
+
 // Initiates the procedure of creating a new file.
 void FileNew(HWND);
 

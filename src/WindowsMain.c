@@ -478,15 +478,7 @@ LRESULT ProcessNotification(WPARAM wparam, LPNMHDR nmhdr)
 {
 	if (nmhdr->code == TCN_SELCHANGE)
 	{
-		unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
-
-		// If the waveform of this channel hasn't been painted yet, then neither has the fourier transform. If it has been painted, then so has the fourier transform.
-		if (fileEditor.waveformGraphs[currentChannel] == NULL)
-		{
-			PlotChannelGraphs(currentChannel);
-		}
-		
-		DisplayChannelGraphs(currentChannel);
+		UpdateEditorToCurrentChannel();
 	}
 
 	return 0;
@@ -598,6 +590,19 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 	}
 
 	return 0;
+}
+
+void UpdateEditorToCurrentChannel()
+{
+	unsigned short currentChannel = TabCtrl_GetCurSel(fileEditor.channelTabs);
+
+	// If the waveform of this channel hasn't been painted yet, then neither has the fourier transform. If it has been painted, then so has the fourier transform.
+	if (fileEditor.waveformGraphs[currentChannel] == NULL)
+	{
+		PlotChannelGraphs(currentChannel);
+	}
+	
+	DisplayChannelGraphs(currentChannel);
 }
 
 void FileNew(HWND windowHandle)
@@ -854,21 +859,45 @@ void FileSaveAs(HWND windowHandle)
 
 void Undo(HWND windowHandle)
 {
-	if (UndoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack)))
+	if (CanUndo(fileEditor.modificationStack))
 	{
-		UpdateWindowTitle();
-		UpdateUndoRedoState();
-		PlotAndDisplayChannelGraphs(TabCtrl_GetCurSel(fileEditor.channelTabs));
+		unsigned short channel = GetUndoChannel(fileEditor.modificationStack);
+		SetChannelDomain(channel, FREQUENCY_DOMAIN);
+
+		if (UndoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack)))
+		{
+			UpdateWindowTitle();
+			UpdateUndoRedoState();
+			PlotChannelFourier(channel);
+			PlotChannelWaveform(channel);
+
+			if (channel == TabCtrl_GetCurSel(fileEditor.channelTabs))
+			{
+				DisplayChannelGraphs(channel);
+			}
+		}
 	}
 }
 
 void Redo(HWND windowHandle)
 {
-	if (RedoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack)))
+	if (CanRedo(fileEditor.modificationStack))
 	{
-		UpdateWindowTitle();
-		UpdateUndoRedoState();
-		PlotAndDisplayChannelGraphs(TabCtrl_GetCurSel(fileEditor.channelTabs));
+		unsigned short channel = GetUndoChannel(fileEditor.modificationStack);
+		SetChannelDomain(channel, FREQUENCY_DOMAIN);
+
+		if (RedoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack)))
+		{
+			UpdateWindowTitle();
+			UpdateUndoRedoState();
+			PlotChannelFourier(channel);
+			PlotChannelWaveform(channel);
+
+			if (channel == TabCtrl_GetCurSel(fileEditor.channelTabs))
+			{
+				DisplayChannelGraphs(channel);
+			}
+		}
 	}
 }
 
@@ -1308,8 +1337,8 @@ void PlotChannelWaveform(unsigned short channel)
 		for (unsigned int xCoord = 0; xCoord < GRAPH_WIDTH; xCoord++)																								\
 		{																																							\
 			/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/											\
-			unsigned long long startSample = ceil_DoubleReal(binSize * xCoord);																						\
-			unsigned long long endSample = ClampInt(ceil_DoubleReal(binSize * (xCoord + 1)), 0, length);															\
+			unsigned long long startSample = llceil_DoubleReal(binSize * xCoord);																					\
+			unsigned long long endSample = ClampInt(llceil_DoubleReal(binSize * (xCoord + 1)), 0, length);															\
 																																									\
 			/* Finding the min and max values of all samples in the range [startSample, endSample).*/																\
 			precision##Real min = GetMin_##precision##Real(func, startSample, endSample, stepSize);																	\
@@ -1388,8 +1417,8 @@ void PlotChannelFourier(unsigned short channel)
 	{																																								\
 		/* Calculating the indices of the first (inclusive) and last (exclusive) samples which map to this x pixel.*/												\
 		/* The sample at index 0 is special, it makes no sense to edit since it stands fo 0Hz (what the hell is 0Hz?) so we don't plot it.*/						\
-		unsigned long long startSample = ceil_DoubleReal(binSize * i) + (i == 0 ? 1 : 0);																			\
-		unsigned long long endSample = ClampInt(ceil_DoubleReal(binSize * (i + 1)), 0, length);																		\
+		unsigned long long startSample = llceil_DoubleReal(binSize * i) + (i == 0 ? 1 : 0);																			\
+		unsigned long long endSample = ClampInt(llceil_DoubleReal(binSize * (i + 1)), 0, length);																	\
 																																									\
 		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																	\
 		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, stepSize));										\

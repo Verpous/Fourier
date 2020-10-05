@@ -24,289 +24,21 @@
 #include <limits.h>	 // For CHAR_BIT.
 #include <stdio.h>	 // For fprintf.
 
-char ApplyModification(unsigned long long fromSample, unsigned long long toSample, ChangeType changeType, double changeAmount, double smoothing, unsigned short channel, Function **channelsData, Modification **modificationStack)
-{
-	// Deallocating changes that were applied and then undone. A new modification means a new branching of the modifications tree, and we are only interested in the path of the tree we're currently on.
-	DeallocateModificationsNextwards((*modificationStack)->next);
-
-	// Creating a modification struct for this change.
-	Modification *modification = malloc(sizeof(Modification));
-	modification->startSample = fromSample;
-	modification->oldFunc = CreatePartialClone(channelsData[channel], fromSample, toSample); // Recording the state of the samples that are about to be changed.
-	modification->changeType = changeType;
-	modification->changeAmount = changeAmount;
-	modification->smoothing = smoothing;
-	modification->channel = channel;
-	modification->prev = *modificationStack;
-	modification->next = NULL;
-
-	// Exiting if malloc failed. Note that by doing this after deallocating next modifications, we lose them but if we switch the order, allocating memory may fail where it would otherwise succeed.
-	if (modification->oldFunc == NULL)
-	{
-		return FALSE;
-	}
-
-	// Assigning this change to the new top of the stack.
-	(*modificationStack)->next = modification;
-	*modificationStack = modification;
-
-	// This actually makes the change in the channel data.
-	ApplyModificationInternal(channelsData, modification);
-	return TRUE;
-}
-
-void ApplyModificationInternal(Function** channelsData, Modification* modification)
-{
-	#define APPLY_MODIFICATION_INTERNAL_TYPED(precision)																											\
-	Function_##precision##Complex channelData = *(((Function_##precision##Complex**)channelsData)[modification->channel]);											\
-	unsigned long long length = NumOfSamples(modification->oldFunc);																								\
-	unsigned long long startSample = modification->startSample;																										\
-	precision##Real smoothing = modification->smoothing, changeAmount = modification->changeAmount;																	\
-																																									\
-	/* After this threshold the graph plateaus.*/																													\
-	precision##Real tukeyThreshold = (smoothing * length) / CAST(2.0, precision##Real);																				\
-																																									\
-	/* This gets reused in a lot of calculations.*/																													\
-	precision##Real piDivThreshold = CAST(M_PI, precision##Real) / tukeyThreshold;																					\
-																																									\
-	/* Need to have this rounded up.*/																																\
-	unsigned long long tukeyThresholdInt = ceil_##precision##Real(tukeyThreshold);																					\
-																																									\
-	/* Because we apply the changes symmetrically, there's a risk that the halfway point will get applied twice when the length is even.*/							\
-	/* The following calculations are for finding out where we need to stop applying changes symmetrically in order to not double dip on the halfway point.*/		\
-	unsigned long long halfwayPoint = (length - 1) / 2;																												\
-	unsigned long long tukeyThresholdClamped = tukeyThresholdInt == halfwayPoint + 1 && length % 2 == 0 ? halfwayPoint : tukeyThresholdInt;							\
-	unsigned long long halfwayPointClamped = length % 2 == 0 ? halfwayPoint : halfwayPoint - 1;																		\
-																																									\
-	if (modification->changeType == MULTIPLY)																														\
-	{																																								\
-		unsigned long long i;																																		\
-																																									\
-		/* The window function is piecewise so we'll apply it in two parts.*/																						\
-		/* In the first part, 0 <= n < tukeyWindow, w[n] and w[length - 1 - n] are equal to 0.5 * (1 - cos(n / piDivThreshold)).*/									\
-		for (i = 0; i < tukeyThresholdClamped; i++)																													\
-		{																																							\
-			precision##Real multiplier = changeAmount * (CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivThreshold * i)));	\
-			get(channelData, startSample + i) *= multiplier;																										\
-			get(channelData, startSample + (length - 1 - i)) *= multiplier; /* Applying the change symmetrically.*/													\
-		}																																							\
-																																									\
-		/* In the second part, tukeyWindow <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1.*/													\
-		for (; i <= halfwayPointClamped; i++)																														\
-		{																																							\
-			get(channelData, startSample + i) *= changeAmount;																										\
-			get(channelData, startSample + (length - 1 - i)) *= changeAmount;																						\
-		}																																							\
-																																									\
-		if (length % 2 == 0)																																		\
-		{																																							\
-			get(channelData, startSample + i) *= changeAmount;																										\
-		}																																							\
-	}																																								\
-	else /* Additive change.*/																																		\
-	{																																								\
-		unsigned long long i;																																		\
-																																									\
-		/* The window function is piecewise so we'll apply it in two parts.*/																						\
-		/* In the first part, 0 <= n < tukeyWindow, w[n] and w[length - 1 - n] are equal to 0.5 * (1 - cos(n / piDivThreshold)).*/									\
-		for (i = 0; i < tukeyThresholdClamped; i++)																													\
-		{																																							\
-			precision##Real addition = changeAmount * (CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivThreshold * i)));		\
-			precision##Real val1 = get(channelData, startSample + i), val2 = get(channelData, startSample + (length - 1 - i));										\
-																																									\
-			/* Calculating the new magnitudes, which are the old ones + the addition clamped at 0.*/																\
-			precision##Real magnitude1 = Clamp##precision(cabs_##precision##Complex(val1) + addition, 0.0, INFINITY);												\
-			precision##Real magnitude2 = Clamp##precision(cabs_##precision##Complex(val2) + addition, 0.0, INFINITY);												\
-																																									\
-			/* Setting the new numbers to have the same phase as before but with the new magnitudes.*/																\
-			get(channelData, startSample + i) = magnitude1 * cexp(I * carg_##precision##Complex(val1));																\
-			get(channelData, startSample + (length - 1 - i)) = magnitude2 * cexp(I * carg_##precision##Complex(val2)); /* Applying the change symmetrically.*/		\
-		}																																							\
-																																									\
-		/* In the second part, tukeyWindow <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1.*/													\
-		for (; i <= halfwayPointClamped; i++)																														\
-		{																																							\
-			precision##Real val1 = get(channelData, startSample + i), val2 = get(channelData, startSample + (length - 1 - i));										\
-			precision##Real magnitude1 = Clamp##precision(cabs_##precision##Complex(val1) + changeAmount, 0.0, INFINITY);											\
-			precision##Real magnitude2 = Clamp##precision(cabs_##precision##Complex(val2) + changeAmount, 0.0, INFINITY);											\
-			get(channelData, startSample + i) = magnitude1 * cexp(I * carg_##precision##Complex(val1));																\
-			get(channelData, startSample + (length - 1 - i)) = magnitude2 * cexp(I * carg_##precision##Complex(val2));												\
-		}																																							\
-																																									\
-		if (length % 2 == 0)																																		\
-		{																																							\
-			precision##Real val = get(channelData, startSample + i);																								\
-			precision##Real magnitude = Clamp##precision(cabs_##precision##Complex(val) + changeAmount, 0.0, INFINITY);												\
-			get(channelData, startSample + i) = magnitude * cexp(I * carg_##precision##Complex(val));																\
-		}																																							\
-	}
-
-	// Normally I would have this in a switch statement, but there's lots of variable declarations inside these macros that won't compile in a switch statement.
-	if (GetType(channelsData[modification->channel]) == FloatComplexType)
-	{
-		APPLY_MODIFICATION_INTERNAL_TYPED(Float)
-	}
-	else
-	{
-		APPLY_MODIFICATION_INTERNAL_TYPED(Double)
-	}
-}
-
-char RedoLastModification(Function** channelsData, Modification** modificationStack)
-{
-	Modification* current = *modificationStack;
-
-	if (CanRedo(current))
-	{
-		Modification* next = current->next;
-
-		// Applying the modification again.
-		ApplyModificationInternal(channelsData, next);
-
-		// Assigning this modification as our current position on the stack.
-		*modificationStack = next;
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-char UndoLastModification(Function** channelsData, Modification** modificationStack)
-{
-	Modification* current = *modificationStack;
-
-	if (CanUndo(current))
-	{
-		Modification* prev = current->prev;
-
-		// Restoring the backed up values back into the channel data.
-		CopySamples(channelsData[current->channel], current->oldFunc, current->startSample, 0, NumOfSamples(current->oldFunc));
-
-		// Assigning the last modification as our current position on the stack.
-		*modificationStack = prev;
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-char CanRedo(Modification* modificationStack)
-{
-	return modificationStack != NULL && modificationStack->next != NULL;
-}
-
-char CanUndo(Modification* modificationStack)
-{
-	return modificationStack != NULL && modificationStack->prev != NULL;
-}
-
-void InitializeModificationStack(Modification** modificationStack)
-{
-	// The stack is initialized with an empty modification that represents the point before any changes were made.
-	*modificationStack = calloc(1, sizeof(Modification));
-}
-
-void DeallocateModificationStack(Modification* modificationStack)
-{
-	if (modificationStack != NULL)
-	{
-		DeallocateModificationsNextwards(modificationStack->next);
-		DeallocateModificationsPrevwards(modificationStack);
-	}
-}
-
-void DeallocateModificationsNextwards(Modification* modificationStack)
-{
-	Modification* current = modificationStack;
-
-	while (current != NULL)
-	{
-		Modification* next = current->next;
-		DeallocateModification(current);
-		current = next;
-	}
-}
-
-void DeallocateModificationsPrevwards(Modification* modificationStack)
-{
-	Modification* current = modificationStack;
-
-	while (current != NULL)
-	{
-		Modification* prev = current->prev;
-		DeallocateModification(current);
-		current = prev;
-	}
-}
-
-void DeallocateModification(Modification* modification)
-{
-	if (modification->oldFunc != NULL)
-	{
-		DeallocateFunctionInternals(modification->oldFunc);
-		free(modification->oldFunc);
-	}
-
-	free(modification);
-}
-
-unsigned long long BitReverse(unsigned int digits, unsigned long long n)
-{
-	int i;
-	unsigned long long reversed = 0, mask = 1;
-
-	// First iterating on the left half of the number.
-	for (i = 0; (2 * i) + 1 < digits; i++, mask <<= 1)
-	{
-		unsigned long long bit = mask & n;
-		bit <<= digits - (2 * i) - 1;
-		reversed |= bit;
-	}
-
-	// Now iterating on the right half.
-	for (; i < digits; i++, mask <<= 1)
-	{
-		unsigned long long bit = mask & n;
-		bit >>= (2 * i) + 1 - digits;
-		reversed |= bit;
-	}
-
-	return reversed;
-}
-
-void RealInterleavedFFT(Function* f)
-{
-	switch (GetType(f))
-	{
-		case FloatComplexType:
-			RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
-			break;
-		case DoubleComplexType:
-			RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
-			break;
-		default:
-			fprintf(stderr, "Tried to FFT an invalid type.\n");
-			break;
-	}
-}
-
-void InverseRealInterleavedFFT(Function* f)
-{
-	switch (GetType(f))
-	{
-		case FloatComplexType:
-			InverseRealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
-			break;
-		case DoubleComplexType:
-			InverseRealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
-			break;
-		default:
-			fprintf(stderr, "Tried to IFFT an invalid type.\n");
-			break;
-	}
-}
-
 #define SOUND_EDITOR_C_PRECISION_CONTENTS(precision)																									\
+ __attribute__((always_inline)) inline																													\
+precision##Complex PolarToCartesian_##precision##Complex(precision##Real magnitude, precision##Real angle)												\
+{																																						\
+	precision##Real sine, cosine;																														\
+	sincos_##precision##Real(angle, &sine, &cosine);																									\
+	return magnitude * (cosine + (I * sine));																											\
+}																																						\
+																																						\
+ __attribute__((always_inline)) inline																													\
+precision##Complex RootOfUnity_##precision##Complex(unsigned long long k, precision##Real N)															\
+{																																						\
+	return PolarToCartesian_##precision##Complex(1.0, (CAST(-2.0 * M_PI, precision##Real) * k) / N);													\
+}																																						\
+																																						\
 void BitReverseArr_##precision##Complex(Function_##precision##Complex f)																				\
 {																																						\
 	unsigned long long len = NumOfSamples(&f);																											\
@@ -324,13 +56,6 @@ void BitReverseArr_##precision##Complex(Function_##precision##Complex f)								
 			get(f, reversed) = temp;																													\
 		}																																				\
 	}																																					\
-}																																						\
-																																						\
-precision##Complex RootOfUnity_##precision##Complex(unsigned long long k, precision##Real N)															\
-{																																						\
-	precision##Real sine, cosine;																														\
-	sincos_##precision##Real((CAST(-2.0 * M_PI, FloatComplex) * k) / N, &sine, &cosine);																\
-	return cosine + (I * sine);																															\
 }																																						\
 																																						\
 void RealInterleavedFFT_##precision##Complex(Function_##precision##Complex f)																			\
@@ -405,18 +130,18 @@ void InverseRealInterleavedFFT_##precision##Complex(Function_##precision##Comple
 /* The algorithm itself is a modified version of this: https://stackoverflow.com/a/37729648/12553917. */												\
 void FFT_##precision##Complex(Function_##precision##Complex f)																							\
 {																																						\
-	unsigned long long len = NumOfSamples(&f);																											\
-																																						\
 	/* Bit-reversing the array sorts it by the order of the leaves in the recursion tree.*/																\
 	BitReverseArr_##precision##Complex(f);																												\
 																																						\
 	/* The stride is the length of each sub-tree in the current level.*/																				\
 	/*We start from 2 because the level with length-1 sub-trees is trivial and assumed to already be contained in the array.*/							\
 	unsigned long long stride = 2, halfStride = 1;																										\
-	unsigned int logLen = CountTrailingZeroes(len);																										\
 																																						\
 	/* We keep the version of stride that's converted to a float cached because we use it a lot.*/														\
 	precision##Complex strideReal = stride;																												\
+																																						\
+	unsigned long long len = NumOfSamples(&f);																											\
+	unsigned int logLen = CountTrailingZeroes(len);																										\
 																																						\
 	/* Each iteration of this loop climbs another level up the recursion tree.*/																		\
 	for (unsigned int j = 0; j < logLen; j++)																											\
@@ -425,6 +150,7 @@ void FFT_##precision##Complex(Function_##precision##Complex f)																		
 		for (unsigned long long i = 0; i < len; i += stride)																							\
 		{																																				\
 			unsigned long long iPlusHalfStride = i + halfStride; /* Caching repeatedly-used calculation.*/												\
+																																						\
 			/* Each iteration of this loop moves to the next element in the current tree.*/																\
 			/* We only need to iterate over half the elements because in each iteration, we calculate two indices together.*/							\
 			for (unsigned long long k = 0; k < halfStride; k++)																							\
@@ -466,3 +192,291 @@ void InverseFFT_##precision##Complex(Function_##precision##Complex f)											
 
 SOUND_EDITOR_C_PRECISION_CONTENTS(Double)
 SOUND_EDITOR_C_PRECISION_CONTENTS(Float)
+
+void RealInterleavedFFT(Function* f)
+{
+	switch (GetType(f))
+	{
+		case FloatComplexType:
+			RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
+			break;
+		case DoubleComplexType:
+			RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+			break;
+		default:
+			fprintf(stderr, "Tried to FFT an invalid type.\n");
+			break;
+	}
+}
+
+void InverseRealInterleavedFFT(Function* f)
+{
+	switch (GetType(f))
+	{
+		case FloatComplexType:
+			InverseRealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
+			break;
+		case DoubleComplexType:
+			InverseRealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+			break;
+		default:
+			fprintf(stderr, "Tried to IFFT an invalid type.\n");
+			break;
+	}
+}
+
+unsigned long long BitReverse(unsigned int digits, unsigned long long n)
+{
+	int i;
+	unsigned long long reversed = 0, mask = 1;
+
+	// First iterating on the left half of the number.
+	for (i = 0; (2 * i) + 1 < digits; i++, mask <<= 1)
+	{
+		unsigned long long bit = mask & n;
+		bit <<= digits - (2 * i) - 1;
+		reversed |= bit;
+	}
+
+	// Now iterating on the right half.
+	for (; i < digits; i++, mask <<= 1)
+	{
+		unsigned long long bit = mask & n;
+		bit >>= (2 * i) + 1 - digits;
+		reversed |= bit;
+	}
+
+	return reversed;
+}
+
+char ApplyModification(unsigned long long fromSample, unsigned long long toSample, ChangeType changeType, double changeAmount, double smoothing, unsigned short channel, Function **channelsData, Modification **modificationStack)
+{
+	// Deallocating changes that were applied and then undone. A new modification means a new branching of the modifications tree, and we are only interested in the path of the tree we're currently on.
+	DeallocateModificationsNextwards((*modificationStack)->next);
+
+	// Creating a modification struct for this change.
+	Modification* modification = malloc(sizeof(Modification));
+	modification->startSample = fromSample;
+	modification->oldFunc = CreatePartialClone(channelsData[channel], fromSample, toSample); // Recording the state of the samples that are about to be changed.
+	modification->changeType = changeType;
+	modification->changeAmount = changeAmount;
+	modification->smoothing = smoothing;
+	modification->channel = channel;
+	modification->prev = *modificationStack;
+	modification->next = NULL;
+
+	// Exiting if malloc failed. Note that by doing this after deallocating next modifications, we lose them but if we switch the order, allocating memory may fail where it would otherwise succeed.
+	if (modification->oldFunc == NULL)
+	{
+		return FALSE;
+	}
+
+	// Assigning this change to the new top of the stack.
+	(*modificationStack)->next = modification;
+	*modificationStack = modification;
+
+	// This actually makes the change in the channel data.
+	ApplyModificationInternal(channelsData, modification);
+	return TRUE;
+}
+
+void ApplyModificationInternal(Function** channelsData, Modification* modification)
+{
+	#define APPLY_MODIFICATION_INTERNAL_TYPED(precision)																											\
+	Function_##precision##Complex channelData = *(((Function_##precision##Complex**)channelsData)[modification->channel]);											\
+	unsigned long long length = NumOfSamples(modification->oldFunc);																								\
+	unsigned long long startSample = modification->startSample;																										\
+	unsigned long long endSample = startSample + length - 1;																										\
+	precision##Real smoothing = modification->smoothing, changeAmount = modification->changeAmount;																	\
+																																									\
+	/* This value appears in a few different places.*/																												\
+	precision##Real tukeyWidth = (smoothing * length) / CAST(2.0, precision##Real);																					\
+																																									\
+	/* This gets reused in a lot of calculations.*/																													\
+	precision##Real piDivWidth = CAST(M_PI, precision##Real) / tukeyWidth;																							\
+																																									\
+	/* The graph plateaus at this sample. Need to have this rounded up.*/																							\
+	/* By clamping this the way that we do, we prevent double-dipping (applying the change to the same sample twice) when symmetrically applying a change.*/		\
+	unsigned long long plateauStart = ClampInt(llceil_##precision##Real(tukeyWidth), 0, length / 2);																\
+																																									\
+	if (modification->changeType == MULTIPLY)																														\
+	{																																								\
+		unsigned long long i;																																		\
+		precision##Real changeAmountMinusOne = changeAmount - 1.0; /* This number is often-used so we cache it.*/													\
+																																									\
+		/* The window function is piecewise so we'll apply it in two parts.*/																						\
+		/* In the first part, 0 <= n < tukeyWidth, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
+		/* We want the multiplication to apply the changeAmount at its peak and 1 at the edges. So the real multiplier is 1 + (changeAmount - 1) * w[n].*/			\
+		for (i = 0; i < plateauStart; i++)																															\
+		{																																							\
+			precision##Real multiplier = CAST(1.0, precision##Real) + (changeAmountMinusOne *																		\
+				(CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i))));												\
+			get(channelData, startSample + i) *= multiplier;																										\
+			get(channelData, endSample - i) *= multiplier; /* Applying the change symmetrically.*/																	\
+		}																																							\
+																																									\
+		/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
+		unsigned long long plateauEnd = length - 1 - i;																												\
+																																									\
+		/* In the second part, tukeyWidth <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1 so we apply the full changeAmount.*/					\
+		/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
+		for (; i <= plateauEnd; i++)																																\
+		{																																							\
+			get(channelData, startSample + i) *= changeAmount;																										\
+		}																																							\
+	}																																								\
+	else /* Additive change. This can be either add or subtract.*/																									\
+	{																																								\
+		unsigned long long i;																																		\
+																																									\
+		/* The window function is piecewise so we'll apply it in two parts.*/																						\
+		/* In the first part, 0 <= n < tukeyWindow, w[n] and w[length - 1 - n] are equal to 0.5 * 0.5 - 0.5 * cos(piDivWidth * n)).*/								\
+		for (i = 0; i < plateauStart; i++)																															\
+		{																																							\
+			/* Calculating the magnitude we want to add.*/																											\
+			precision##Real addition = changeAmount * (CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i)));			\
+																																									\
+			/* Getting the samples we want to add to.*/																												\
+			precision##Real val1 = get(channelData, startSample + i);																								\
+			precision##Real val2 = get(channelData, endSample - i);																									\
+																																									\
+			/* Calculating the new magnitudes of the samples, which are the old ones + the addition clamped at 0.*/													\
+			precision##Real magnitude1 = Clamp##precision(cabs_##precision##Complex(val1) + addition, 0.0, INFINITY);												\
+			precision##Real magnitude2 = Clamp##precision(cabs_##precision##Complex(val2) + addition, 0.0, INFINITY);												\
+																																									\
+			/* Setting the samples to have the same phase as before but with the new magnitudes.*/																	\
+			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude1, carg_##precision##Complex(val1));									\
+			get(channelData, endSample - i) = PolarToCartesian_##precision##Complex(magnitude2, carg_##precision##Complex(val2));	 								\
+		}																																							\
+																																									\
+		/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
+		unsigned long long plateauEnd = length - 1 - i;																												\
+																																									\
+		/* In the second part, tukeyWindow <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1 so we add the full changeAmount.*/					\
+		/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
+		for (; i <= plateauEnd; i++)																																\
+		{																																							\
+			precision##Real val = get(channelData, startSample + i);																								\
+			precision##Real magnitude = Clamp##precision(cabs_##precision##Complex(val) + changeAmount, 0.0, INFINITY);												\
+			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude, carg_##precision##Complex(val));									\
+		}																																							\
+	}
+
+	// Normally I would have this in a switch statement, but there's lots of variable declarations inside these macros that won't compile in a switch statement.
+	if (GetType(channelsData[modification->channel]) == FloatComplexType)
+	{
+		APPLY_MODIFICATION_INTERNAL_TYPED(Float)
+	}
+	else
+	{
+		APPLY_MODIFICATION_INTERNAL_TYPED(Double)
+	}
+}
+
+char RedoLastModification(Function** channelsData, Modification** modificationStack)
+{
+	Modification* current = *modificationStack;
+
+	if (CanRedo(current))
+	{
+		Modification* next = current->next;
+
+		// Applying the modification again.
+		ApplyModificationInternal(channelsData, next);
+
+		// Assigning this modification as our current position on the stack.
+		*modificationStack = next;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+char UndoLastModification(Function** channelsData, Modification** modificationStack)
+{
+	Modification* current = *modificationStack;
+
+	if (CanUndo(current))
+	{
+		Modification* prev = current->prev;
+
+		// Restoring the backed up values back into the channel data.
+		CopySamples(channelsData[current->channel], current->oldFunc, current->startSample, 0, NumOfSamples(current->oldFunc));
+
+		// Assigning the last modification as our current position on the stack.
+		*modificationStack = prev;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+char CanRedo(Modification* modificationStack)
+{
+	return modificationStack != NULL && modificationStack->next != NULL;
+}
+
+char CanUndo(Modification* modificationStack)
+{
+	return modificationStack != NULL && modificationStack->prev != NULL;
+}
+
+unsigned short GetRedoChannel(Modification* modificationStack)
+{
+	return modificationStack->next->channel;
+}
+
+unsigned short GetUndoChannel(Modification* modificationStack)
+{
+	return modificationStack->channel;
+}
+
+void InitializeModificationStack(Modification** modificationStack)
+{
+	// The stack is initialized with an empty modification that represents the point before any changes were made.
+	*modificationStack = calloc(1, sizeof(Modification));
+}
+
+void DeallocateModificationStack(Modification* modificationStack)
+{
+	if (modificationStack != NULL)
+	{
+		DeallocateModificationsNextwards(modificationStack->next);
+		DeallocateModificationsPrevwards(modificationStack);
+	}
+}
+
+void DeallocateModificationsNextwards(Modification* modificationStack)
+{
+	Modification* current = modificationStack;
+
+	while (current != NULL)
+	{
+		Modification* next = current->next;
+		DeallocateModification(current);
+		current = next;
+	}
+}
+
+void DeallocateModificationsPrevwards(Modification* modificationStack)
+{
+	Modification* current = modificationStack;
+
+	while (current != NULL)
+	{
+		Modification* prev = current->prev;
+		DeallocateModification(current);
+		current = prev;
+	}
+}
+
+void DeallocateModification(Modification* modification)
+{
+	if (modification->oldFunc != NULL)
+	{
+		DeallocateFunctionInternals(modification->oldFunc);
+		free(modification->oldFunc);
+	}
+
+	free(modification);
+}

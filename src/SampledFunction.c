@@ -226,10 +226,10 @@ void CopySamples(Function* dest, Function* src, unsigned long long destFrom, uns
 	switch (GetType(dest))
 	{
 		case FloatComplexType:
-			CopySamples_FloatComplex(*((Function_FloatComplex*)dest), *((Function_FloatComplex*)dest), destFrom, srcFrom, length);
+			CopySamples_FloatComplex(*((Function_FloatComplex*)dest), *((Function_FloatComplex*)src), destFrom, srcFrom, length);
 			break;
 		case DoubleComplexType:
-			CopySamples_DoubleComplex(*((Function_DoubleComplex*)dest), *((Function_DoubleComplex*)dest), destFrom, srcFrom, length);
+			CopySamples_DoubleComplex(*((Function_DoubleComplex*)dest), *((Function_DoubleComplex*)src), destFrom, srcFrom, length);
 			break;
 		default:
 			break;

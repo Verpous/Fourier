@@ -1,7 +1,17 @@
-CC:=gcc # C Compiler
-CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -O3 # C Compiler Flags. -Wno-unknown-pragmas gets rid of warnings about regions in the code. -O3 makes gcc optimize hard.
-LFlags:=-Wall -mwindows # Linker Flags. -mwindows means that when you run the program it doesn't open cmd.
+# C Compiler.
+CC:=gcc
 
+# C compiler flags.
+# -Wno-unknown-pragmas gets rid of warnings about regions in the code.
+# -O3 makes gcc optimize hard.
+# -std=c18 is the default, but I want to ensure it stays this way because apparently inline functions are very sensitive to the standard being used.
+CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -O3 -std=c18
+
+# Linker flags.
+# -mwindows makes it so when you run the program it doesn't open cmd.
+LFlags:=-Wall -mwindows
+
+# Libraries that we link.
 # comdlg32 makes open/save file dialogs work.
 # ksuser makes the KSDATAFORMAT_SUBTYPE_PCM macro work.
 # comctl32 makes various common controls work.

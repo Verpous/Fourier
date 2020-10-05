@@ -15,83 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "MyUtilsInternal.h"
-#include <stdlib.h> // For memcpy, rand, etc.
-#include <limits.h> // For CHAR_BIT and max unsigned long long.
 #include <tchar.h>	// For dealing with ansi and unicode strings.
-#include <math.h>	// For functions like log10.
-
-int RandRange(int min, int max)
-{
-	return Modulus(rand(), max - min) + min;
-}
-
-long long RandLong()
-{
-	return (((long long)rand()) << (sizeof(int) * CHAR_BIT)) | rand();
-}
-
-float RandRangeFloat(float min, float max)
-{
-	return min + ((((unsigned int)rand()) / ((float)UINT_MAX)) * (max - min));
-}
-
-double RandRangeDouble(double min, double max)
-{
-	return min + ((((unsigned long long)RandLong()) / ((double)ULONG_LONG_MAX)) * (max - min));
-}
-
-float ClampFloat(float val, float min, float max)
-{
-	return val > max ? max : val < min ? min : val;
-}
-
-double ClampDouble(double val, double min, double max)
-{
-	return val > max ? max : val < min ? min : val;
-}
-
-long long ClampInt(long long val, long long min, long long max)
-{
-	return val > max ? max : val < min ? min : val;
-}
-
-long long DivCeilInt(long long numerator, long long denominator)
-{
-	lldiv_t divResult = lldiv(numerator, denominator);
-	return divResult.quot + (divResult.rem == 0 ? 0 : 1);
-}
-
-float SquareMagnitudeFloatComplex(float complex val)
-{
-	float realPart = crealf(val);
-	float imagPart = cimagf(val);
-	return (realPart * realPart) + (imagPart * imagPart);
-}
-
-double SquareMagnitudeDoubleComplex(double complex val)
-{
-	double realPart = creal(val);
-	double imagPart = cimag(val);
-	return (realPart * realPart) + (imagPart * imagPart);
-}
-
-float LinearToDecibelFloatReal(float val, float reference)
-{
-	return 10 * log10f(val / reference);
-}
-
-double LinearToDecibelDoubleReal(double val, double reference)
-{
-	return 10 * log10(val / reference);
-}
-
-void Swap(void* a, void* b, size_t size)
-{
-	char temp[size];
-	memcpy(temp, a, size);
-	memcpy(a, b, size);
-	memcpy(b, temp, size);
-}
 
 void Bubblesort(void* arr, int length, char (*comparator)(void*, void*), size_t size)
 {
@@ -130,7 +54,7 @@ void Quicksort(void* arr, int low, int high, char (*comparator)(void*, void*), s
 
 int Partition(void* arr, int low, int high, char (*comparator)(void*, void*), size_t size)
 {
-	int rand = RandRange(low, high + 1);
+	int rand = RandRangeInt(low, high + 1);
 	void *pivot = arr + (high * size);
 	Swap(arr + (rand * size), pivot, size);
 
@@ -210,16 +134,6 @@ char FileExists(LPCTSTR path)
 {
 	WIN32_FIND_DATA data = {0};
 	return FindFirstFile(path, &data) != INVALID_HANDLE_VALUE;
-}
-
-int Modulus(int numerator, int denominator)
-{
-	return ((numerator % denominator) + denominator) % denominator;
-}
-
-int Sign(int num)
-{
-	return num > 0 ? 1 : num == 0 ? 0 : -1;
 }
 
 char IsScientificNotation(TCHAR* str)

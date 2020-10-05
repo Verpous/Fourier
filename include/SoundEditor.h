@@ -21,6 +21,14 @@ typedef struct Modification
 	struct Modification* next;		// The modification after this one.
 } Modification;
 
+// Applies an FFT to the function assuming that it's a real function in complex interleaved form, as described in this document:
+// https://www.ti.com/lit/an/spra291/spra291.pdf?ts=1597858546752&ref_url=https%253A%252F%252Fwww.google.co.il%252F.
+// Basically, f is treated as if it's a complex sequence where the real parts correspond to even indices of a real sequence g, and the imaginary parts correspond to odds.
+void RealInterleavedFFT(Function*);
+
+// Applies an IFFT to the function assuming it's a real function in complex interleaved form.
+void InverseRealInterleavedFFT(Function*);
+
 // Applies a modification to the function in the given channel and stores the modification in the modifications stack. Returns zero iff there was a memory allocation error.
 char ApplyModification(unsigned long long, unsigned long long, ChangeType, double, double, unsigned short, Function**, Modification**);
 
@@ -36,18 +44,16 @@ char CanRedo(Modification*);
 // Returns nonzero value iff there are changes that can be undone.
 char CanUndo(Modification*);
 
+// Returns the channel that would be affected by the redo button at this time. Assumes that CanRedo is true, do not call this otherwise.
+unsigned short GetRedoChannel(Modification*);
+
+// Returns the channel that would be affected by the undo button at this time. Assumes that CanUndo is true, do not call this otherwise.
+unsigned short GetUndoChannel(Modification*);
+
 // Allocates and initializes a new modification stack.
 void InitializeModificationStack(Modification**);
 
 // Deallocates memory associated with the given modification stack.
 void DeallocateModificationStack(Modification*);
-
-// Applies an FFT to the function assuming that it's a real function in complex interleaved form, as described in this document:
-// https://www.ti.com/lit/an/spra291/spra291.pdf?ts=1597858546752&ref_url=https%253A%252F%252Fwww.google.co.il%252F.
-// Basically, f is treated as if it's a complex sequence where the real parts correspond to even indices of a real sequence g, and the imaginary parts correspond to odds.
-void RealInterleavedFFT(Function*);
-
-// Applies an IFFT to the function assuming it's a real function in complex interleaved form.
-void InverseRealInterleavedFFT(Function*);
 
 #endif
