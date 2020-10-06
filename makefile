@@ -22,40 +22,45 @@ LinkedLibs:=-lcomdlg32 -lksuser -lcomctl32 -lshlwapi
 
 all: unicode
 
-# Compiles and links everything with debug information that is useful to debuggers.
+# Compiles and links everything with debug information that is useful to gdb.
 debug: CFlags += -g
 debug: all
 
+# Compiles and links everything with profile information that is useful to gprof.
 profile: CFlags += -pg
 profile: LFlags += -pg
 profile: all
 
 # Compiles and links everything for unicode strings.
 unicode: CFlags += -D UNICODE -D _UNICODE
-unicode: bin/fourier
+unicode: bin/fourier.exe
 
 # Compiles and links everything for ANSI strings.
-ansi: bin/fourier
+ansi:
+ansi: bin/fourier.exe
 
 # Compiles and runs. Output streams are redirected to a log.
 run: unicode
-	bin/fourier >>errors.log 2>&1
+	bin/fourier.exe >>errors.log 2>&1
 
 # "Run exclusively". Same as run, but won't try to compile it.
 runx:
-	bin/fourier >>errors.log 2>&1
+	bin/fourier.exe >>errors.log 2>&1
 
 # Same as run but without the io redirection.
 runstdio: unicode
-	bin/fourier
+	bin/fourier.exe
 
 # Empties the bin folder.
 clean:
 	rm -f bin/*
 
 # The following targets do the actual job of compiling and linking all the different files. You'll probably never run them directly.
-bin/fourier: bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o bin/Resources.o
-	$(CC) $(LFlags) bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o bin/Resources.o $(LinkedLibs) -o bin/fourier
+bin/fourier.exe: bin bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o bin/Resources.o
+	$(CC) $(LFlags) bin/WindowsMain.o bin/WaveReadWriter.o bin/SoundEditor.o bin/MyUtils.o bin/SampledFunction.o bin/Resources.o $(LinkedLibs) -o bin/fourier.exe
+
+bin:
+	mkdir -p bin
 
 bin/WindowsMain.o: src/WindowsMain.c
 	$(CC) $(CFlags) -o bin/WindowsMain.o src/WindowsMain.c
