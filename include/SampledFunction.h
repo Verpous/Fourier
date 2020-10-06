@@ -35,6 +35,9 @@ typedef float FloatReal;
 #define cabs_FloatComplex(x) cabsf(x)
 #define cabs_DoubleComplex(x) cabs(x)
 
+#define csqrt_FloatComplex(x) csqrtf(x)
+#define csqrt_DoubleComplex(x) csqrt(x)
+
 #define creal_FloatComplex(x) crealf(x)
 #define creal_DoubleComplex(x) creal(x)
 
@@ -88,6 +91,7 @@ typedef struct Function_##type																																				\
 } Function_##type;																																							\
 																																											\
 /* Initializes a function, including allocating its samples array. Returns zero iff there was a memory allocation error.*/													\
+/* If an error does occur, memory allocated before the error does not get freed. You must call DeallocateFunctionInternals yourself to avoid memory leaks.*/				\
 char AllocateFunctionInternals_##type(Function_##type*, unsigned long long);																								\
 																																											\
 /* Deallocates a function.*/																																				\

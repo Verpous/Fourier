@@ -9,7 +9,7 @@ CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -O3 -std=c18
 
 # Linker flags.
 # -mwindows makes it so when you run the program it doesn't open cmd.
-LFlags:=-Wall -mwindows
+LFlags=-Wall -mwindows
 
 # Libraries that we link.
 # comdlg32 makes open/save file dialogs work.
@@ -18,13 +18,17 @@ LFlags:=-Wall -mwindows
 # shlwapi makes PathStripPath work.
 LinkedLibs:=-lcomdlg32 -lksuser -lcomctl32 -lshlwapi
 
-.PHONY: all debug unicode ansi run runx runvscode clean
+.PHONY: all debug profile unicode ansi run runx runvscode clean
 
 all: unicode
 
 # Compiles and links everything with debug information that is useful to debuggers.
 debug: CFlags += -g
 debug: all
+
+profile: CFlags += -pg
+profile: LFlags += -pg
+profile: all
 
 # Compiles and links everything for unicode strings.
 unicode: CFlags += -D UNICODE -D _UNICODE

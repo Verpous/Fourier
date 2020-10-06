@@ -55,7 +55,7 @@ char AllocateFunctionInternals_##type(Function_##type* f, unsigned long long len
 																																							\
 void DeallocateFunctionInternals_##type(Function_##type* f)																									\
 {																																							\
-	if (f->samples != NULL)																																	\
+	if (f != NULL && f->samples != NULL)																													\
 	{																																						\
 		for (unsigned long i = 0; i < f->segmentCount; i++)																									\
 		{																																					\

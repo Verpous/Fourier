@@ -25,6 +25,7 @@
 #include <stdio.h>	 // For fprintf.
 
 #define SOUND_EDITOR_C_PRECISION_CONTENTS(precision)																									\
+/* Takes a magnitude and a phase angle and returns the complex number with these polar coordinates.*/													\
  __attribute__((always_inline)) inline																													\
 precision##Complex PolarToCartesian_##precision##Complex(precision##Real magnitude, precision##Real angle)												\
 {																																						\
@@ -33,16 +34,64 @@ precision##Complex PolarToCartesian_##precision##Complex(precision##Real magnitu
 	return magnitude * (cosine + (I * sine));																											\
 }																																						\
 																																						\
+/* Calculates the k/N'th root of unity. That is, exp(-2 * pi * i * k / N).*/																			\
  __attribute__((always_inline)) inline																													\
 precision##Complex RootOfUnity_##precision##Complex(unsigned long long k, precision##Real N)															\
 {																																						\
 	return PolarToCartesian_##precision##Complex(1.0, (CAST(-2.0 * M_PI, precision##Real) * k) / N);													\
 }																																						\
 																																						\
-void BitReverseArr_##precision##Complex(Function_##precision##Complex f)																				\
+SoundEditorCache* InitializeSoundEditor_##precision##Complex(Function_##precision##Complex* f)															\
 {																																						\
-	unsigned long long len = NumOfSamples(&f);																											\
-	unsigned int digits = CountTrailingZeroes(len);																										\
+	/* At first we have to allocate a bunch of stuff.*/																									\
+	SoundEditorCache* cache = malloc(sizeof(SoundEditorCache));																							\
+																																						\
+	if (cache == NULL)																																	\
+	{																																					\
+		return NULL;																																	\
+	}																																					\
+																																						\
+	cache->twiddleFactors = malloc(sizeof(Function_##precision##Complex));																				\
+																																						\
+	if (cache->twiddleFactors == NULL)																													\
+	{																																					\
+		free(cache);																																	\
+		return NULL;																																	\
+	}																																					\
+																																						\
+	unsigned long long length = NumOfSamples(f);																										\
+	unsigned long long halfLength = length / 2;																											\
+																																						\
+	if (!AllocateFunctionInternals_##precision##Complex(cache->twiddleFactors, halfLength))																\
+	{																																					\
+		DeallocateFunctionInternals_##precision##Complex(cache->twiddleFactors);																		\
+		free(cache->twiddleFactors);																													\
+		free(cache);																																	\
+		return NULL;																																	\
+	}																																					\
+																																						\
+	/* Now that everything is allocated, we can proceed with occupying the cache with values.*/															\
+	cache->length = length;																																\
+	cache->logLength = CountTrailingZeroes(length);																										\
+	Function_##precision##Complex twiddleFactors = *CAST(cache->twiddleFactors, Function_##precision##Complex*);										\
+																																						\
+	/* Converting to real because we'll be using it that way a lot.*/																					\
+	precision##Real lengthReal = length;																												\
+																																						\
+	get(twiddleFactors, 0) = 1.0;																														\
+																																						\
+	for (unsigned long long i = 1; i < halfLength; i++)																									\
+	{																																					\
+		get(twiddleFactors, i) = RootOfUnity_##precision##Complex(i, lengthReal);																		\
+	}																																					\
+																																						\
+	return cache;																																		\
+}																																						\
+																																						\
+void BitReverseArr_##precision##Complex(Function_##precision##Complex f, SoundEditorCache* cache)														\
+{																																						\
+	unsigned long long len = cache->length;																												\
+	unsigned int digits = cache->logLength;																												\
 																																						\
 	for (unsigned long long i = 0; i < len; i++)																										\
 	{																																					\
@@ -58,121 +107,174 @@ void BitReverseArr_##precision##Complex(Function_##precision##Complex f)								
 	}																																					\
 }																																						\
 																																						\
-void RealInterleavedFFT_##precision##Complex(Function_##precision##Complex f)																			\
+/* This is an auxiliary function of RealInterleavedFFT. It calculates the postprocessing step for it.*/													\
+/* 'sample' is the k'th sample in the function, 'oppositeSample' is the N-k'th sample 'root' is the k/N'th root of unity.*/								\
+ __attribute__((always_inline)) inline																													\
+precision##Complex ForwardPostprocess_##precision##Complex(precision##Complex sample, precision##Complex oppositeSample, precision##Complex root)		\
 {																																						\
-	unsigned long long len = NumOfSamples(&f);																											\
+	precision##Complex val = I * root;																													\
+	precision##Complex coeffA = CAST(1.0, precision##Complex) - val;																					\
+	precision##Complex coeffB = CAST(1.0, precision##Complex) + val;																					\
+	return CAST(0.5, precision##Complex) * ((sample * coeffA) + (conj_##precision##Complex(oppositeSample) * coeffB));									\
+}																																						\
 																																						\
-	/* This number gets used a lot and as a float. So we convert it once to save on conversions later.*/												\
-	precision##Real twoLenReal = 2 * len;																												\
+/* This is an auxiliary function of RealInterleavedFFT. It symmetrically applies postprocessing to the k'th and N-k'th samples in the function.*/		\
+/* 'sample' is the k'th sample in the function, 'oppositeSample' is the N-k'th sample 'root' is the k/N'th root of unity.*/								\
+ __attribute__((always_inline)) inline																													\
+void ForwardPostprocessSymmetric_##precision##Complex(precision##Complex* sample, precision##Complex* oppositeSample, precision##Complex root)			\
+{																																						\
+	/* Can't just dereference these when I need them because their values get changed and they both need both.*/										\
+	precision##Complex sampleVal = *sample, oppositeSampleVal = *oppositeSample;																		\
 																																						\
-	FFT_##precision##Complex(f);																														\
+	/* root is assumed to be equal to RootOfUnity(k, 2N) where k is the index of 'sample' and N is the length of the interleaved function.*/			\
+	/* I did some math, and the following expression equals RootOfUnity(N - k, 2N). N - k is assumed to be the index of 'oppositeSample'.*/				\
+	precision##Complex oppositeRoot = CAST(-1.0, precision##Complex) / root; 																			\
+	*sample = ForwardPostprocess_##precision##Complex(sampleVal, oppositeSampleVal, root);																\
+	*oppositeSample = ForwardPostprocess_##precision##Complex(oppositeSampleVal, sampleVal, oppositeRoot); 												\
+}																																						\
+																																						\
+void RealInterleavedFFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache* cache)													\
+{																																						\
+	unsigned long long len = cache->length;																												\
+	Function_##precision##Complex twiddleFactors = *CAST(cache->twiddleFactors, Function_##precision##Complex*);										\
+																																						\
+	/* These get used often.*/																															\
+	unsigned long long halfLen = len / 2;																												\
+																																						\
+	FFT_##precision##Complex(f, cache);																													\
 																																						\
 	/* Applying postprocessing to extract the DFT of the original function from the DFT of the interleaved one.*/										\
 	/* The math is according to the document linked in the header for this function.*/																	\
 	/* get(f, 0) is a special case because there is no get(f, len - 0).*/																				\
-	get(f, 0) = CAST(0.5, precision##Complex) *																											\
-				((get(f, 0) * CAST(1.0 - I, precision##Complex)) + (conj_##precision##Complex(get(f, 0)) * CAST(1.0 + I, precision##Complex)));			\
+	get(f, 0) = ForwardPostprocess_##precision##Complex(get(f, 0), get(f, 0), 1.0);																		\
 																																						\
 	/* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/														\
-	for (unsigned long long k = 1; k < len / 2; k++)																									\
+	/* We iterate over half the samples and postprocess 2 samples in each go because each k'th sample shares computations with the len-k'th one.*/		\
+	/* This computation uses RootOfUnity(k, 2*len) for each 1<=k<=2*len. But our cache only contains RootOfUnity(k, len) for each 1<=k<=len/2.*/		\
+	/* If we had RootOfUnity(k, 2*len) for each 1<=k<=len/2, it's easy to extract RootOfUnity(len - k, 2*len). The math is explained later.*/			\
+	/* To overcome the first hurdle, that we have roots for length-N and not length-2N, we split postprocessing into even and odd indices.*/			\
+	for (unsigned long long k = 1; k < halfLen; k += 2)																									\
 	{																																					\
-		precision##Complex fOfK = get(f, k);																											\
-		precision##Complex fOfLenMinusK = get(f, len - k);																								\
-		precision##Complex rootK = RootOfUnity_##precision##Complex(k, twoLenReal);																		\
-		precision##Complex rootLenMinusK = CAST(-1.0, precision##Complex) / rootK; /* I did some math, and this equals RootOfUnity(len - k, 2 * len)*/	\
-		precision##Complex val1 = I * rootK;																											\
-		precision##Complex val2 = I * rootLenMinusK;																									\
-		precision##Complex coeffA1 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val1);											\
-		precision##Complex coeffB1 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val1);											\
-		precision##Complex coeffA2 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val2);											\
-		precision##Complex coeffB2 = CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val2);											\
-		get(f, k) = (fOfK * coeffA1) + (conj_##precision##Complex(fOfLenMinusK) * coeffB1);																\
-		get(f, len - k) = (fOfLenMinusK * coeffA2) + (conj_##precision##Complex(fOfK) * coeffB2);														\
+		/* For odd indices, RootOfUnity(k, 2*len)=csqrt(RootOfUnity(k, len)), and we have the root inside.*/											\
+		precision##Complex root = csqrt_##precision##Complex(get(twiddleFactors, k));																	\
+		ForwardPostprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), root);															\
+	}																																					\
+																																						\
+	for (unsigned long long k = 2; k < halfLen; k += 2)																									\
+	{																																					\
+		/* For even indices, RootOfUnity(k, 2*len)=RootOfUnity(k/2, len), which we have cached.*/														\
+		precision##Complex root	= get(twiddleFactors, k / 2);																							\
+		ForwardPostprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), root);															\
 	}																																					\
 }																																						\
 																																						\
-void InverseRealInterleavedFFT_##precision##Complex(Function_##precision##Complex f)																	\
+/* This is an auxiliary function of InverseRealInterleavedFFT. It calculates the preprocessing step for it.*/											\
+/* 'sample' is the k'th sample in the function, 'oppositeSample' is the N-k'th sample 'root' is the k/N'th root of unity.*/								\
+ __attribute__((always_inline)) inline																													\
+precision##Complex BackwardPreprocess_##precision##Complex(precision##Complex sample, precision##Complex oppositeSample, precision##Complex root)		\
 {																																						\
-	unsigned long long len = NumOfSamples(&f);																											\
+	precision##Complex val = I * root;																													\
+	precision##Complex coeffA = conj_##precision##Complex(CAST(1.0, precision##Complex) - val);															\
+	precision##Complex coeffB = conj_##precision##Complex(CAST(1.0, precision##Complex) + val);															\
+	return CAST(0.5, precision##Complex) * ((sample * coeffA) + (conj_##precision##Complex(oppositeSample) * coeffB));									\
+}																																						\
 																																						\
-	/* This number gets used a lot and as a float. So we convert it once to save on conversions later.*/												\
-	precision##Complex twoLenReal = 2 * len;																											\
+/* This is an auxiliary function of InverseRealInterleavedFFT. It symmetrically applies preprocessing to the k'th and N-k'th samples in the function.*/	\
+/* 'sample' is the k'th sample in the function, 'oppositeSample' is the N-k'th sample 'root' is the k/N'th root of unity.*/								\
+ __attribute__((always_inline)) inline																													\
+void BackwardPreprocessSymmetric_##precision##Complex(precision##Complex* sample, precision##Complex* oppositeSample, precision##Complex root)			\
+{																																						\
+	/* Can't just dereference these when I need them because their values get changed and they both need both.*/										\
+	precision##Complex sampleVal = *sample, oppositeSampleVal = *oppositeSample;																		\
+																																						\
+	/* root is assumed to be equal to RootOfUnity(k, 2N) where k is the index of 'sample' and N is the length of the interleaved function.*/			\
+	/* I did some math, and the following expression equals RootOfUnity(N - k, 2N). N - k is assumed to be the index of 'oppositeSample'.*/				\
+	precision##Complex oppositeRoot = CAST(-1.0, precision##Complex) / root; 																			\
+	*sample = BackwardPreprocess_##precision##Complex(sampleVal, oppositeSampleVal, root);																\
+	*oppositeSample = BackwardPreprocess_##precision##Complex(oppositeSampleVal, sampleVal, oppositeRoot); 												\
+}																																						\
+void InverseRealInterleavedFFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache* cache)											\
+{																																						\
+	unsigned long long len = cache->length;																												\
+	Function_##precision##Complex twiddleFactors = *CAST(cache->twiddleFactors, Function_##precision##Complex*);										\
+																																						\
+	/* These get used often.*/																															\
+	unsigned long long halfLen = len / 2;																												\
 																																						\
 	/* Applying preprocessing to revert back to the DFT of the interleaved function.*/																	\
 	/* The math is from the same document as the one I used for the forward transform.*/																\
 	/* get(f, 0) is a special case because there is no get(f, len - 0).*/																				\
-	get(f, 0) = CAST(0.5, precision##Complex) *																											\
-				((get(f, 0) * CAST(1.0 + I, precision##Complex)) + (conj_##precision##Complex(get(f, 0)) * CAST(1.0 - I, precision##Complex)));			\
+	get(f, 0) = BackwardPreprocess_##precision##Complex(get(f, 0), get(f, 0), 1.0);  																	\
 																																						\
-	/* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/														\
-	for (unsigned long long k = 1; k < len / 2; k++)																									\
+	/* There's a lot of shit to explain about this, but it's identical to what's already explained in RealInterleavedFFT.*/								\
+	/* Refer to the comments there for more information.*/																								\
+	for (unsigned long long k = 1; k < halfLen; k += 2)																									\
 	{																																					\
-		precision##Complex fOfK = get(f, k);																											\
-		precision##Complex fOfLenMinusK = get(f, len - k);																								\
-		precision##Complex rootK = RootOfUnity_##precision##Complex(k, twoLenReal);																		\
-		precision##Complex rootLenMinusK = CAST(-1.0, precision##Complex) / rootK; /* I did some math, and this equals RootOfUnity(len - k, 2 * len)*/	\
-		precision##Complex val1 = I * rootK;																											\
-		precision##Complex val2 = I * rootLenMinusK;																									\
-		precision##Complex coeffA1 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val1));					\
-		precision##Complex coeffB1 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val1));					\
-		precision##Complex coeffA2 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) - val2));					\
-		precision##Complex coeffB2 = conj_##precision##Complex(CAST(0.5, precision##Complex) * (CAST(1.0, precision##Complex) + val2));					\
-		get(f, k) = (fOfK * coeffA1) + (conj_##precision##Complex(fOfLenMinusK) * coeffB1);																\
-		get(f, len - k) = (fOfLenMinusK * coeffA2) + (conj_##precision##Complex(fOfK) * coeffB2);														\
+		precision##Complex root = csqrt_##precision##Complex(get(twiddleFactors, k));																	\
+		BackwardPreprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), root);															\
+	}																																					\
+																																						\
+	for (unsigned long long k = 2; k < halfLen; k += 2)																									\
+	{																																					\
+		precision##Complex root	= get(twiddleFactors, k / 2);																							\
+		BackwardPreprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), root);															\
 	}																																					\
 																																						\
 	/* Now applying inverse FFT. The result will be the original interleaved sequence of even and odd reals (with changes we've applied).*/				\
-	InverseFFT_##precision##Complex(f);																													\
+	InverseFFT_##precision##Complex(f, cache);																											\
 }																																						\
 																																						\
 /* Most of the comments in this function refer to a picture of the recursion tree the algorithm follows, which I saw here:*/							\
 /* https://www.geeksforgeeks.org/iterative-fast-fourier-transformation-polynomial-multiplication/*/														\
 /* The algorithm itself is a modified version of this: https://stackoverflow.com/a/37729648/12553917. */												\
-void FFT_##precision##Complex(Function_##precision##Complex f)																							\
+void FFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache* cache)																	\
 {																																						\
 	/* Bit-reversing the array sorts it by the order of the leaves in the recursion tree.*/																\
-	BitReverseArr_##precision##Complex(f);																												\
+	BitReverseArr_##precision##Complex(f, cache);																										\
+																																						\
+	unsigned long long len = cache->length;																												\
+	unsigned long long halfLen = len / 2;																												\
+	unsigned int logLen = cache->logLength;																												\
+	Function_##precision##Complex twiddleFactors = *CAST(cache->twiddleFactors, Function_##precision##Complex*);										\
 																																						\
 	/* The stride is the length of each sub-tree in the current level.*/																				\
-	/*We start from 2 because the level with length-1 sub-trees is trivial and assumed to already be contained in the array.*/							\
-	unsigned long long stride = 2, halfStride = 1;																										\
-																																						\
-	/* We keep the version of stride that's converted to a float cached because we use it a lot.*/														\
-	precision##Complex strideReal = stride;																												\
-																																						\
-	unsigned long long len = NumOfSamples(&f);																											\
-	unsigned int logLen = CountTrailingZeroes(len);																										\
+	/* We start from 2 because the level with length-1 sub-trees is trivial and assumed to already be contained in the array.*/							\
+	unsigned long long stride = 2;																														\
+	unsigned long long halfStride = 1;																													\
+	unsigned long long lenDivStride = halfLen;																											\
 																																						\
 	/* Each iteration of this loop climbs another level up the recursion tree.*/																		\
 	for (unsigned int j = 0; j < logLen; j++)																											\
 	{																																					\
-		/* Each iteration of this loop moves to the next tree in the current level.*/																	\
-		for (unsigned long long i = 0; i < len; i += stride)																							\
+		/* Each iteration of this loop moves to the next element in the current tree.*/																	\
+		/* We only need to iterate over half the elements because in each iteration, we calculate two indices together.*/								\
+		for (unsigned long long k = 0; k < halfStride; k++)																								\
 		{																																				\
-			unsigned long long iPlusHalfStride = i + halfStride; /* Caching repeatedly-used calculation.*/												\
+			/* Caching repeatedly-used calculations.*/																									\
+			unsigned long long kPlusHalfStride = k + halfStride; 																						\
+			precision##Complex factor = get(twiddleFactors, (k * lenDivStride) % halfLen);																\
 																																						\
-			/* Each iteration of this loop moves to the next element in the current tree.*/																\
-			/* We only need to iterate over half the elements because in each iteration, we calculate two indices together.*/							\
-			for (unsigned long long k = 0; k < halfStride; k++)																							\
+			/* Each iteration of this loop moves to the next tree in the current level.*/																\
+			for (unsigned long long i = 0; i < len; i += stride)																						\
 			{																																			\
 				/* i serves as a sort of "base" for the current tree. i + k is the k'th element in the (i / stride)'th tree of this level.*/			\
 				precision##Complex evenSum = get(f, i + k);																								\
-				precision##Complex oddSum = RootOfUnity_##precision##Complex(k, strideReal) * get(f, iPlusHalfStride + k); /* TODO: cache roots.*/		\
+				precision##Complex oddSum = factor * get(f, kPlusHalfStride + i);											 							\
 				get(f, i + k) = evenSum + oddSum;																										\
-				get(f, iPlusHalfStride + k) = evenSum - oddSum;																							\
+				get(f, kPlusHalfStride + i) = evenSum - oddSum;																							\
 			}																																			\
 		}																																				\
 																																						\
 		/* In the next level, trees will be twice as big.*/																								\
 		stride *= 2;																																	\
 		halfStride *= 2;																																\
-		strideReal = stride;																															\
+		lenDivStride /= 2;																																\
 	}																																					\
 }																																						\
 																																						\
-void InverseFFT_##precision##Complex(Function_##precision##Complex f)																					\
+void InverseFFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache* cache)															\
 {																																						\
-	unsigned long long len = NumOfSamples(&f);																											\
+	unsigned long long len = cache->length;																												\
 																																						\
 	/* Conjugating every sample before applying forward FFT.*/																							\
 	for (unsigned long long i = 0; i < len; i++)																										\
@@ -181,7 +283,7 @@ void InverseFFT_##precision##Complex(Function_##precision##Complex f)											
 	}																																					\
 																																						\
 	/* Applying forward fft.*/																															\
-	FFT_##precision##Complex(f);																														\
+	FFT_##precision##Complex(f, cache);																													\
 																																						\
 	/* Conjugating again and dividing by the num of samples.*/																							\
 	for (unsigned long long i = 0; i < len; i++)																										\
@@ -193,15 +295,42 @@ void InverseFFT_##precision##Complex(Function_##precision##Complex f)											
 SOUND_EDITOR_C_PRECISION_CONTENTS(Double)
 SOUND_EDITOR_C_PRECISION_CONTENTS(Float)
 
-void RealInterleavedFFT(Function* f)
+SoundEditorCache* InitializeSoundEditor(Function* f)
 {
 	switch (GetType(f))
 	{
 		case FloatComplexType:
-			RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
+			return InitializeSoundEditor_FloatComplex(f);
+		case DoubleComplexType:
+			return InitializeSoundEditor_DoubleComplex(f);
+		default:
+			fprintf(stderr, "Tried to initialize the sound editor to an invalid type.\n");
+			return NULL;
+	}
+}
+
+void DeallocateSoundEditorCache(SoundEditorCache* cache)
+{
+	if (cache == NULL)
+	{
+		return;
+	}
+		
+	// DeallocateFunctionInternals as well as free can handle NULL pointers no problem.
+	DeallocateFunctionInternals(cache->twiddleFactors);
+	free(cache->twiddleFactors);
+	free(cache);
+}
+
+void RealInterleavedFFT(Function* f, SoundEditorCache* cache)
+{
+	switch (GetType(f))
+	{
+		case FloatComplexType:
+			RealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f), cache);
 			break;
 		case DoubleComplexType:
-			RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+			RealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f), cache);
 			break;
 		default:
 			fprintf(stderr, "Tried to FFT an invalid type.\n");
@@ -209,15 +338,15 @@ void RealInterleavedFFT(Function* f)
 	}
 }
 
-void InverseRealInterleavedFFT(Function* f)
+void InverseRealInterleavedFFT(Function* f, SoundEditorCache* cache)
 {
 	switch (GetType(f))
 	{
 		case FloatComplexType:
-			InverseRealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f));
+			InverseRealInterleavedFFT_FloatComplex(*((Function_FloatComplex*)f), cache);
 			break;
 		case DoubleComplexType:
-			InverseRealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f));
+			InverseRealInterleavedFFT_DoubleComplex(*((Function_DoubleComplex*)f), cache);
 			break;
 		default:
 			fprintf(stderr, "Tried to IFFT an invalid type.\n");
@@ -227,23 +356,13 @@ void InverseRealInterleavedFFT(Function* f)
 
 unsigned long long BitReverse(unsigned int digits, unsigned long long n)
 {
-	int i;
-	unsigned long long reversed = 0, mask = 1;
+	unsigned long long reversed = 0;
 
-	// First iterating on the left half of the number.
-	for (i = 0; (2 * i) + 1 < digits; i++, mask <<= 1)
+	for (int i = 0; i < digits; i++)
 	{
-		unsigned long long bit = mask & n;
-		bit <<= digits - (2 * i) - 1;
-		reversed |= bit;
-	}
-
-	// Now iterating on the right half.
-	for (; i < digits; i++, mask <<= 1)
-	{
-		unsigned long long bit = mask & n;
-		bit >>= (2 * i) + 1 - digits;
-		reversed |= bit;
+		reversed <<= 1;
+		reversed |= (n & 1);
+		n >>= 1;
 	}
 
 	return reversed;

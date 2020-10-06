@@ -706,7 +706,7 @@ void FileOpen(HWND windowHandle)
 					messageText = TEXT("The file size could not be determined.");
 					break;
 				case FILE_BAD_SAMPLES:
-					messageText = TEXT("The file is too short.");
+					messageText = TEXT("The file is too short to be edited.");
 					break;
 				case FILE_MISC_ERROR:
 				default:
@@ -866,10 +866,10 @@ void Undo(HWND windowHandle)
 
 		if (UndoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack)))
 		{
-			UpdateWindowTitle();
-			UpdateUndoRedoState();
 			PlotChannelFourier(channel);
 			PlotChannelWaveform(channel);
+			UpdateWindowTitle();
+			UpdateUndoRedoState();
 
 			if (channel == TabCtrl_GetCurSel(fileEditor.channelTabs))
 			{
@@ -888,10 +888,10 @@ void Redo(HWND windowHandle)
 
 		if (RedoLastModification(fileEditor.channelsData, &(fileEditor.modificationStack)))
 		{
-			UpdateWindowTitle();
-			UpdateUndoRedoState();
 			PlotChannelFourier(channel);
 			PlotChannelWaveform(channel);
+			UpdateWindowTitle();
+			UpdateUndoRedoState();
 
 			if (channel == TabCtrl_GetCurSel(fileEditor.channelTabs))
 			{
@@ -984,9 +984,9 @@ void ApplyModificationFromInput(HWND windowHandle)
 
 	if (ApplyModification(fromFreqInt, toFreqInt, changeType, changeAmount, smoothing, currentChannel, fileEditor.channelsData, &(fileEditor.modificationStack)))
 	{
+		PlotAndDisplayChannelGraphs(currentChannel);
 		UpdateWindowTitle();
 		UpdateUndoRedoState();
-		PlotAndDisplayChannelGraphs(currentChannel);
 	}
 	else
 	{
@@ -1026,7 +1026,8 @@ void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 	CloseFileEditor();
 	fileEditor.fileInfo = fileInfo;
 
-	if (LoadPCMInterleaved(fileInfo, &(fileEditor.channelsData)))
+	if (LoadPCMInterleaved(fileInfo, &(fileEditor.channelsData)) &&
+		(fileEditor.soundEditorCache = InitializeSoundEditor(fileEditor.channelsData[0])) != NULL)
 	{
 		InitializeModificationStack(&(fileEditor.modificationStack));
 
@@ -1253,11 +1254,11 @@ void SetChannelDomain(unsigned short channel, FunctionDomain domain)
 	{
 		if (domain == FREQUENCY_DOMAIN)
 		{
-			RealInterleavedFFT(fileEditor.channelsData[channel]);
+			RealInterleavedFFT(fileEditor.channelsData[channel], fileEditor.soundEditorCache);
 		}
 		else
 		{
-			InverseRealInterleavedFFT(fileEditor.channelsData[channel]);
+			InverseRealInterleavedFFT(fileEditor.channelsData[channel], fileEditor.soundEditorCache);
 		}
 
 		fileEditor.channelsDomain[channel] = domain;
@@ -1545,6 +1546,7 @@ void CloseFileEditor()
 {
 	DeallocateChannelsData();
 	DeallocateChannelsGraphs();
+	DeallocateSoundEditorCache(fileEditor.soundEditorCache);
 	DeallocateModificationStack(fileEditor.modificationStack);
 	CloseWaveFile(fileEditor.fileInfo);
 	free(fileEditor.channelsDomain);

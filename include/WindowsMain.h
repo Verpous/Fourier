@@ -35,6 +35,7 @@ typedef struct FileEditor
 {
 	FileInfo* fileInfo;					// Info about the file that's being edited, such as its format, size, etc.
 	Function** channelsData;			// An array of function pointers. This can be either the waveform or the DFT, we swap between them.
+	SoundEditorCache* soundEditorCache;	// A cache that the sound editor uses to speed up calculations.
 	FunctionDomain* channelsDomain;		// An array that contains the current domains of all the channels (time if it currently has the waveform, frequency if it currently has the DFT).
 
 	HBITMAP* waveformGraphs;			// An array of bitmaps including graphs of all the channels' waveforms. NULL for channels that aren't drawn yet.
