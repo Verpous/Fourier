@@ -437,7 +437,7 @@ ReadWaveResult ValidateFormat(FileInfo* fileInfo)
 ReadWaveResult ValidateWaveform(FileInfo* fileInfo)
 {
 	// Caching the sample length and verifying that it's big enough.
-	if ((fileInfo->sampleLength = CountSampleLength(fileInfo)) < 2)
+	if ((fileInfo->sampleLength = CountSampleLength(fileInfo)) < 16)
 	{
 		return FILE_BAD_SAMPLES;
 	}
@@ -629,10 +629,10 @@ char LoadPCMInterleaved(FileInfo* fileInfo, Function*** channelsData)
 	}																																														\
 																																															\
 	/* Padding until we reach that power of two length. This also has the job of occupying all the data for new files. We pad what 0 would get converted to, as opposed to 0 itself.*/		\
-	/* TODO: potential optimization - use something like memset to add the zero padding more efficiently than going one by one.*/															\
-	for (; sampleIndex < paddedLength; sampleIndex++)																																		\
+	/* It's better for caching if we do the channels in the outer loop and indices in the inner loop.*/																						\
+	for (unsigned short c = 0; c < relevantChannels; c++)																																	\
 	{																																														\
-		for (unsigned short c = 0; c < relevantChannels; c++)																																\
+		for (; sampleIndex < paddedLength; sampleIndex++)																																	\
 		{																																													\
 			get(funcs[c], sampleIndex) = CAST(0.5, precision##Real) / (DEPTH_MAX(depth) + CAST(0.5, precision##Real));																		\
 		}																																													\

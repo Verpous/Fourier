@@ -12,7 +12,7 @@ typedef enum
 } FunctionDomain;
 
 // This struct holds handles to important windows in the new file options dialog so we can reference them.
-typedef struct NewFileOptionsWindow
+typedef struct
 {
 	HWND handle;
 	HWND parent;
@@ -24,14 +24,14 @@ typedef struct NewFileOptionsWindow
 } NewFileOptionsWindow;
 
 // This file holds the selections from the last occurence of the new file options dialog (or default values if it hasn't been opened yet) so they carry over between newly created files within the same instance of the program.
-typedef struct NewFileOptionsSelections
+typedef struct
 {
 	unsigned int length;
 	unsigned int frequency;
 	unsigned int byteDepth;
 } NewFileOptionsSelections;
 
-typedef struct FileEditor
+typedef struct
 {
 	FileInfo* fileInfo;					// Info about the file that's being edited, such as its format, size, etc.
 	Function** channelsData;			// An array of function pointers. This can be either the waveform or the DFT, we swap between them.
@@ -42,6 +42,9 @@ typedef struct FileEditor
 	HBITMAP* fourierGraphs;				// An array of bitmaps including graphs of all the channels' fourier transforms. NULL for channels that aren't drawn yet.
 	unsigned short* fourierGraphsPeaks;	// An array of decibel values to be used as the highest point for the channels' fourier transform graphs.
 	HDC graphingDC;						// The device context used to paint all the waveform and frequency graphs.
+	HDC currentFourierDC;				// The device context we use to paint the current fourier graph with selection. graphingDC is caught in this time because we blit the graph from it.
+	HBRUSH selectionBrush;				// The brush we use to paint frequency range selection onto the fourier graph.
+	HBITMAP currentFourierGraph;		// A buffer we use to double-buffer the painting of fourier graphs in order to fix flickering when selecting a frequency range.
 
 	char isSelecting;					// True iff the user is currently dragging the mouse around to select frequencies.
 	double selectionPivot;				// While isSelecting is true, this contains the frequency at which the selection started.
@@ -66,7 +69,7 @@ typedef struct FileEditor
 	HWND redoButton;					// The button for redoing changes.
 } FileEditor;
 
-// Registers classes and creates the main window.
+// Registers classes, initializes OLE, creates the main window, and more.
 char InitializeWindows(HINSTANCE);
 
 // Registers all of our classes.
@@ -81,8 +84,12 @@ char RegisterNewFileOptionsClass(HINSTANCE);
 // Registers the class for the window that pops up when the program starts that asks you to choose between new file and open file.
 char RegisterSelectFileOptionClass(HINSTANCE);
 
+// Undoes anything InitializeWindows did that must be undone.
+void UninitializeWindows(HINSTANCE);
+
 // Handler for any messages sent to our main window.
 LRESULT CALLBACK MainWindowProcedure(HWND, UINT, WPARAM, LPARAM);
+
 
 // Paints menus, controls, anything that we want to immediately draw when the program starts.
 void PaintMainWindow(HWND);
@@ -90,8 +97,8 @@ void PaintMainWindow(HWND);
 // Paints the menus.
 void AddMainWindowMenus(HWND);
 
-// Paints controls that we want to have when the program starts.
-void AddMainWindowControls(HWND);
+// Processes the WM_STARTFILE message for the main window.
+LRESULT ProcessStartFile();
 
 // Displays the dialog for selecting a file option.
 void PopSelectFileOptionDialog(HWND);
@@ -120,6 +127,9 @@ LRESULT ProcessNotification(WPARAM, LPNMHDR);
 // Checks if the control in question is the waveform graph, and updates its background and foreground colors so it's colored properly.
 LRESULT ProcessControlColorStatic(HDC, HWND);
 
+// Opens files that are dragged and dropped onto our window.
+LRESULT ProcessDropFiles(HDROP);
+
 // Gives the user a chance to save his progress before it is lost if he had any, and then closes the window.
 LRESULT PromptSaveAndClose();
 
@@ -133,7 +143,10 @@ void UpdateEditorToCurrentChannel();
 void FileNew(HWND);
 
 // Prompts the user to choose a file to open, and reads its data into memory.
-void FileOpen(HWND);
+void PromptFileOpen(HWND);
+
+// Opens and reads the file with the given path into memory.
+void FileOpen(LPCTSTR, HWND);
 
 // Saves the current file, or saves-as if the file is new and not saved anywhere yet.
 void FileSave(HWND);
@@ -164,9 +177,6 @@ void PaintFileEditorPermanents();
 
 // Paints the parts of the file editor that need to be repainted every time a new file is opened.
 void PaintFileEditorTemporaries();
-
-// Resets values inside the permanent parts of the file editor for when new files are opened.
-void ResetFileEditorPermanents();
 
 // Sets the given channel to the given domain.
 void SetChannelDomain(unsigned short, FunctionDomain);
@@ -284,5 +294,11 @@ LRESULT CALLBACK FourierGraphWindowProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DW
 
 // Returns nonzero iff the point is within the bounds of the given window.
 char IsInWindow(POINT, HWND);
+
+// Takes the whole command line as a single string and returns argv, and also sets the int* it gets to argc.
+LPTSTR* SplitCommandLine(LPTSTR, int*);
+
+// Returns nonzero iff the given string ends in .wav or .wave.
+char HasWaveExtension(LPTSTR);
 
 #endif

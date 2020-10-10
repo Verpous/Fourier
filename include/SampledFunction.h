@@ -23,20 +23,12 @@ typedef float FloatReal;
 #define get(f, i) ((f).samples[(i) / (f).segmentLen][(i) % (f).segmentLen])
 
 // Macros that rename float functions for different precisions.
-#define cexp_FloatComplex(x) cexpf(x)
-#define cexp_DoubleComplex(x) cexp(x)
-
+// First, things that are only available for complex numbers.
 #define conj_FloatComplex(x) conjf(x)
 #define conj_DoubleComplex(x) conj(x)
 
 #define carg_FloatComplex(x) cargf(x)
 #define carg_DoubleComplex(x) carg(x)
-
-#define cabs_FloatComplex(x) cabsf(x)
-#define cabs_DoubleComplex(x) cabs(x)
-
-#define csqrt_FloatComplex(x) csqrtf(x)
-#define csqrt_DoubleComplex(x) csqrt(x)
 
 #define creal_FloatComplex(x) crealf(x)
 #define creal_DoubleComplex(x) creal(x)
@@ -44,35 +36,27 @@ typedef float FloatReal;
 #define cimag_FloatComplex(x) cimagf(x)
 #define cimag_DoubleComplex(x) cimag(x)
 
-#define cos_FloatReal(x) cosf(x)
-#define cos_DoubleReal(x) cos(x)
-
-#define sin_FloatReal(x) sinf(x)
-#define sin_DoubleReal(x) sin(x)
-
-#define sincos_FloatReal(x, s, c) sincosf(x, s, c)
-#define sincos_DoubleReal(x, s, c) sincos(x, s, c)
-
-#define ceil_FloatReal(x) ceilf(x)
-#define ceil_DoubleReal(x) ceil(x)
-
-#define llceil_FloatReal(x) llroundf(ceilf(x))
-#define llceil_DoubleReal(x) llround(ceil(x))
-
+// Now things that are only available for real numbers.
 #define floor_FloatReal(x) floorf(x)
 #define floor_DoubleReal(x) floor(x)
 
-#define llfloor_FloatReal(x) llroundf(floorf(x))
-#define llfloor_DoubleReal(x) llround(floor(x))
-
-#define abs_FloatReal(x) fabsf(x)
-#define abs_DoubleReal(x) fabs(x)
+#define ceil_FloatReal(x) ceilf(x)
+#define ceil_DoubleReal(x) ceil(x)
 
 #define lround_FloatReal(x) lroundf(x)
 #define lround_DoubleReal(x) lround(x)
 
 #define llround_FloatReal(x) llroundf(x)
-#define llrond_DoubleReal(x) llround(x)
+#define llround_DoubleReal(x) llround(x)
+
+#define llfloor_FloatReal(x) llroundf(floorf(x))
+#define llfloor_DoubleReal(x) llround(floor(x))
+
+#define llceil_FloatReal(x) llroundf(ceilf(x))
+#define llceil_DoubleReal(x) llround(ceil(x))
+
+#define sincos_FloatReal(x, s, c) sincosf(x, s, c)
+#define sincos_DoubleReal(x, s, c) sincos(x, s, c)
 
 #define log10_FloatReal(x) log10f(x)
 #define log10_DoubleReal(x) log10(x)
@@ -80,8 +64,34 @@ typedef float FloatReal;
 #define MAX_FloatReal __FLT_MAX__
 #define MAX_DoubleReal __DBL_MAX__
 
+// Now things that are available for both.
+#define abs_FloatComplex(x) cabsf(x)
+#define abs_DoubleComplex(x) cabs(x)
+#define abs_FloatReal(x) fabsf(x)
+#define abs_DoubleReal(x) fabs(x)
+
+#define sqrt_FloatComplex(x) csqrtf(x)
+#define sqrt_DoubleComplex(x) csqrt(x)
+#define sqrt_FloatReal(x) sqrtf(x)
+#define sqrt_DoubleReal(x) sqrt(x)
+
+#define exp_FloatComplex(x) cexpf(x)
+#define exp_DoubleComplex(x) cexp(x)
+#define exp_FloatReal(x) expf(x)
+#define exp_DoubleReal(x) exp(x)
+
+#define cos_FloatComplex(x) ccosf(x)
+#define cos_DoubleComplex(x) ccos(x)
+#define cos_FloatReal(x) cosf(x)
+#define cos_DoubleReal(x) cos(x)
+
+#define sin_FloatComplex(x) csinf(x)
+#define sin_DoubleComplex(x) csin(x)
+#define sin_FloatReal(x) sinf(x)
+#define sin_DoubleReal(x) sin(x)
+
 #define SAMPLED_FUNCTION_H_TYPED_CONTENTS(type)																																\
-typedef struct Function_##type																																				\
+typedef struct																																								\
 {																																											\
 	FunctionType funcType;																																					\
 	unsigned long long segmentLen;																																			\

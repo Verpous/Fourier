@@ -85,16 +85,22 @@ Function_##type* CreatePartialClone_##type(Function_##type* f, unsigned long lon
 	return clone;																																			\
 }																																							\
 																																							\
-/* TODO: potential optimization - use memcpy to work on large chunks at a time instead of one by one using get which is slow.*/								\
 void CopySamples_##type(Function_##type dest, Function_##type src, unsigned long long destFrom, unsigned long long srcFrom, unsigned long long length)		\
 {																																							\
-	for (unsigned long long i = 0; i < length; i++)																											\
+	unsigned long long amountCopied = 0;																													\
+																																							\
+	while (amountCopied < length)																															\
 	{																																						\
-		get(dest, destFrom + i) = get(src, srcFrom + i);																									\
+		/* We could've just had a simple for loop of get(dest, destFrom + i) = get(src, srcFrom + i), but it's more efficient to copy in bulk.*/			\
+		/* For that we need to calculate how many samples are there to copy in the current block of each function, and copy as many as we can.*/			\
+		unsigned long long destRemainingSamplesInBlock = dest.segmentLen - ((destFrom + amountCopied) % dest.segmentLen);									\
+		unsigned long long srcRemainingSamplesInBlock = src.segmentLen - ((srcFrom + amountCopied) % src.segmentLen);										\
+		unsigned long long amountToCopy = ClampInt(length - amountCopied, 0, min(destRemainingSamplesInBlock, srcRemainingSamplesInBlock));					\
+		memcpy(&get(dest, destFrom + amountCopied), &get(src, srcFrom + amountCopied), amountToCopy * sizeof(type));										\
+		amountCopied += amountToCopy;																														\
 	}																																						\
 }
 
-// TODO: potential optimization - use internal knowledge about how functions work to read from them for min and max more efficiently.*/
 #define SAMPLED_FUNCTION_C_PRECISION_CONTENTS(precision)																									\
 precision##Real GetMax_##precision##Real(Function_##precision##Real f, unsigned long long from, unsigned long long to, unsigned long long step)				\
 {																																							\

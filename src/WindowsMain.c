@@ -25,6 +25,8 @@
 #include <gdiplus.h>	// For drawing graphs.
 #include <time.h>		// To seed rand.
 
+#pragma region Macros
+
 // Takes a notification code and returns it as an HMENU that uses the high word so it works the same as system notification codes.
 #define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
 
@@ -34,8 +36,8 @@
 // This needs to be above 0x8000 and different than the values in Resources.h.
 #define PROGRAM_EXIT 0x8008
 
-// This message tells the main window to pop the select file option dialog.
-#define WM_SELECTFILE WM_USER
+// This message tells the main window to pop the select file option dialog or open the file in the command line when the program starts.
+#define WM_STARTFILE WM_USER
 
 // These don't need to be above 0x8000.
 #define NEW_FILE_OPTIONS_OK 1
@@ -44,7 +46,7 @@
 // File length is measured in seconds.
 #define FILE_MIN_LENGTH 1
 #define FILE_MAX_LENGTH 3600
-#define NEW_FILE_DEFAULT_LENGTH 10 // TODO: change this something like 30 or 60 when the program is finished.
+#define NEW_FILE_DEFAULT_LENGTH 10
 #define LENGTH_TRACKBAR_LINESIZE 1
 #define LENGTH_TRACKBAR_PAGESIZE 60
 
@@ -61,7 +63,7 @@
 // Smoothing is unitless, and is in fact in the [0,1] range, so MAX_SMOOTHING isn't actually the max smoothing it's just how precise can you get between [0,1].
 #define MIN_SMOOTHING 0
 #define MAX_SMOOTHING 1000
-#define DEFAULT_SMOOTHING 1000
+#define DEFAULT_SMOOTHING 500
 #define SMOOTHING_TRACKBAR_LINESIZE 1
 #define SMOOTHING_TRACKBAR_PAGESIZE 10
 
@@ -136,6 +138,8 @@
 #define FILE_FILTER TEXT("Wave files (*.wav;*.wave)\0*.wav;*.wave\0")
 #define TITLE_POSTFIX TEXT(" - Fourier")
 
+#pragma endregion // Macros.
+
 static HWND mainWindowHandle = NULL;
 static HICON programIcon = NULL;
 static NewFileOptionsWindow* newFileOptionsHandles = NULL;
@@ -144,6 +148,7 @@ static FileEditor fileEditor = {0};
 
 #pragma region Initialization
 
+// Trying to use wWinMain causes the program to not compile. It's ok though, because we've got GetCommandLine() to get the line as unicode.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
 	fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
@@ -167,6 +172,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		}
 	}
 
+	UninitializeWindows(hInstance);
 	return 0;
 }
 
@@ -185,11 +191,14 @@ char InitializeWindows(HINSTANCE instanceHandle)
 	commonCtrls.dwICC = ICC_BAR_CLASSES | ICC_STANDARD_CLASSES | ICC_TAB_CLASSES;
 	InitCommonControlsEx(&commonCtrls);
 
-	// Creates main window.
+	// Creates main window. The window is created in the center of the main screen.
 	// WS_CLIPSIBLINGS makes child windows not draw over each other.
-	// TODO: get screen dimensions and spawn window in position such that it's at the center of the screen? If I do, I should also adjust popselectfileoption to spawn in the center.
-	mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("Untitled") TITLE_POSTFIX, WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS,
-		600, 250, MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT, NULL, NULL, NULL, NULL);
+	// WS_EX_ACCEPTFILES makes us receive WM_DROPFILES messages.
+	RECT screen;
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &screen, 0);
+	mainWindowHandle = CreateWindowEx(WS_EX_ACCEPTFILES, WC_MAINWINDOW, TEXT("Untitled") TITLE_POSTFIX, WS_OVERLAPPED | WS_MINIMIZEBOX | WS_SYSMENU | WS_VISIBLE | WS_CLIPSIBLINGS,
+		(screen.right - MAIN_WINDOW_WIDTH) / 2, (screen.bottom / 2) - (MAIN_WINDOW_HEIGHT / 2), MAIN_WINDOW_WIDTH, MAIN_WINDOW_HEIGHT, NULL, NULL, NULL, NULL);
+		
 	return TRUE;
 }
 
@@ -261,6 +270,13 @@ char RegisterSelectFileOptionClass(HINSTANCE instanceHandle)
 	return TRUE;
 }
 
+void UninitializeWindows(HINSTANCE instanceHandle)
+{
+	UnregisterClass(WC_SELECTFILEOPTION, instanceHandle);
+	UnregisterClass(WC_NEWFILEOPTIONS, instanceHandle);
+	UnregisterClass(WC_MAINWINDOW, instanceHandle);
+}
+
 #pragma endregion // Initialization.
 
 #pragma region MainWindow
@@ -271,11 +287,11 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 	{
 		case WM_CREATE:
 			PaintMainWindow(windowHandle);
-			PostMessage(windowHandle, WM_SELECTFILE, 0, 0); // This is a hack to resolve a bug that I couldn't make the modal dialog take focus when the main window was just created, so I post a message that does it with a delay.
+			//RegisterDragDrop(windowHandle, CreateWavDropTarget());
+			PostMessage(windowHandle, WM_STARTFILE, 0, 0); // This is a hack to resolve a bug that modal dialogs can't take focus when the main window was just created. Posting the message adds a delay which fixes it.
 			return 0;
-		case WM_SELECTFILE:
-			PopSelectFileOptionDialog(windowHandle);
-			return 0;
+		case WM_STARTFILE:
+			return ProcessStartFile();
 		case WM_COMMAND:
 			return ProcessMainWindowCommand(windowHandle, wparam, lparam);
 		case WM_HSCROLL:
@@ -294,9 +310,12 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 			return ProcessNotification(wparam, (LPNMHDR)lparam);
 		case WM_CTLCOLORSTATIC:
 			return ProcessControlColorStatic((HDC)wparam, (HWND)lparam);
+		case WM_DROPFILES:
+			return ProcessDropFiles((HDROP)wparam);
 		case WM_CLOSE:
 			return PromptSaveAndClose();
 		case WM_DESTROY:
+			//RevokeDragDrop(windowHandle);
 			PostQuitMessage(0);
 			return 0;
 		// The following two cases are handled fine by the default window procedure, except that isSelecting needs to be set to FALSE.
@@ -307,6 +326,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 			return DefWindowProc(windowHandle, msg, wparam, lparam);
 	}
 }
+
 
 void PaintMainWindow(HWND windowHandle)
 {
@@ -339,10 +359,31 @@ void AddMainWindowMenus(HWND windowHandle)
 	SetMenu(windowHandle, menuHandler);
 }
 
+LRESULT ProcessStartFile()
+{
+	int argc;
+	LPTSTR* argv = SplitCommandLine(GetCommandLine(), &argc);
+
+	// If the program was run with more than one argument, the second argument must be a file to open, so we try that.
+	if (argc > 1)
+	{
+		FileOpen(argv[1], mainWindowHandle);
+	}
+	else // No file was requested to be opened so we pop the dialog that prompts the user to choose.
+	{
+		PopSelectFileOptionDialog(mainWindowHandle);
+	}
+
+	GlobalFree(argv);
+	return 0;
+}
+
 void PopSelectFileOptionDialog(HWND windowHandle)
 {
+	RECT parentRect;
+	GetWindowRect(windowHandle, &parentRect);
 	CreateWindow(WC_SELECTFILEOPTION, TEXT("Select File Option - Fourier"), WS_OVERLAPPED | WS_VISIBLE | WS_SYSMENU,
-		575 + ((MAIN_WINDOW_WIDTH - SELECT_FILE_OPTION_WIDTH) / 2), 200 + ((MAIN_WINDOW_HEIGHT - SELECT_FILE_OPTION_HEIGHT) / 2), SELECT_FILE_OPTION_WIDTH, SELECT_FILE_OPTION_HEIGHT, windowHandle, NULL, NULL, NULL);
+		(parentRect.left + parentRect.right - SELECT_FILE_OPTION_WIDTH) / 2, (parentRect.top + parentRect.bottom - SELECT_FILE_OPTION_HEIGHT) / 2, SELECT_FILE_OPTION_WIDTH, SELECT_FILE_OPTION_HEIGHT, windowHandle, NULL, NULL, NULL);
 	EnableWindow(windowHandle, FALSE);
 }
 
@@ -498,6 +539,26 @@ LRESULT ProcessControlColorStatic(HDC controlHDC, HWND controlWindow)
 	return DefWindowProc(mainWindowHandle, WM_CTLCOLORSTATIC, (WPARAM)controlHDC, (LPARAM)controlWindow);
 }
 
+LRESULT ProcessDropFiles(HDROP dropHandle)
+{
+	UINT pathLen = DragQueryFile(dropHandle, 0, NULL, 0);
+	LPTSTR buffer = malloc(sizeof(TCHAR) * (pathLen + 1)); // +1 for the null character.
+	DragQueryFile(dropHandle, 0, buffer, pathLen + 1);
+
+	if (HasWaveExtension(buffer))
+	{
+		FileOpen(buffer, mainWindowHandle);
+	}
+	else
+	{
+		MessageBox(mainWindowHandle, TEXT("The file is not a .wav file."), NULL, MB_ICONERROR | MB_OK);
+	}
+
+	free(buffer);
+	DragFinish(dropHandle);
+	return 0;
+}
+
 LRESULT PromptSaveAndClose()
 {
 	// Prompt the user to save his progress before it is lost.
@@ -506,10 +567,18 @@ LRESULT PromptSaveAndClose()
 		// Only proceeding if the user didn't choose to abort.
 		CloseFileEditor();
 
-		// This aspect of the file editor is only allocated once on the first file open which means it only needs to be deleted once, here.
+		// These aspects of the file editor is only allocated once on the first file open which means it only needs to be deleted once, here.
 		if (fileEditor.graphingDC != NULL)
 		{
 			DeleteDC(fileEditor.graphingDC);
+			DeleteDC(fileEditor.currentFourierDC);
+			DeleteBrush(fileEditor.selectionBrush);
+		}
+		
+		// This is allocated separately from the things above, so it needs to be deleted separately.
+		if (fileEditor.currentFourierGraph != NULL)
+		{
+			DeleteBitmap(fileEditor.currentFourierGraph);
 		}
 
 		DestroyWindow(mainWindowHandle);
@@ -565,7 +634,7 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 			FileNew(windowHandle);
 			break;
 		case FILE_ACTION_OPEN:
-			FileOpen(windowHandle);
+			PromptFileOpen(windowHandle);
 			break;
 		case FILE_ACTION_SAVE:
 			FileSave(windowHandle);
@@ -614,13 +683,17 @@ void FileNew(HWND windowHandle)
 	}
 
 	newFileOptionsHandles = calloc(1, sizeof(NewFileOptionsWindow));
-	newFileOptionsHandles->handle = CreateWindow(WC_NEWFILEOPTIONS, TEXT("New File Options - Fourier"),
-												 WS_VISIBLE | WS_OVERLAPPED | WS_SYSMENU, 950, 550, NEW_FILE_OPTIONS_WIDTH, NEW_FILE_OPTIONS_HEIGHT, windowHandle, NULL, NULL, NULL);
+
+	RECT parentRect;
+	GetWindowRect(windowHandle, &parentRect);
+	newFileOptionsHandles->handle = CreateWindow(WC_NEWFILEOPTIONS, TEXT("New File Options - Fourier"), WS_VISIBLE | WS_OVERLAPPED | WS_SYSMENU,
+		(parentRect.left + parentRect.right - NEW_FILE_OPTIONS_WIDTH) / 2, (parentRect.top + parentRect.bottom - NEW_FILE_OPTIONS_HEIGHT) / 2, NEW_FILE_OPTIONS_WIDTH, NEW_FILE_OPTIONS_HEIGHT, windowHandle, NULL, NULL, NULL);
+
 	newFileOptionsHandles->parent = windowHandle;
 	EnableWindow(windowHandle, FALSE); // Disabling the parent because this is a modal window.
 }
 
-void FileOpen(HWND windowHandle)
+void PromptFileOpen(HWND windowHandle)
 {
 	// Giving the user a chance to save his current progress first (if there isn't any the function will take care of that).
 	if (!PromptSaveProgress(windowHandle))
@@ -642,80 +715,7 @@ void FileOpen(HWND windowHandle)
 
 	if (GetOpenFileName(&ofn))
 	{
-		FileInfo* fileInfo;
-		ReadWaveResult result = ReadWaveFile(&fileInfo, filename);
-
-		if (!ResultHasError(result))
-		{
-			if (ResultHasWarning(result))
-			{
-				if (ResultWarningCode(result) & FILE_CHUNK_WARNING)
-				{
-					int choice = MessageBox(windowHandle,
-											TEXT("The file contains some information which is ignored by this program, which may lead to unexpected results."),
-											TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
-
-					if (choice == IDCANCEL)
-					{
-						CloseWaveFile(fileInfo);
-						return;
-					}
-				}
-
-				if (ResultWarningCode(result) & FILE_CHAN_WARNING)
-				{
-					int choice = MessageBox(windowHandle,
-											TEXT("The file contains more channels than this program supports. You will only be able to edit some of the channels."),
-											TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
-
-					if (choice == IDCANCEL)
-					{
-						CloseWaveFile(fileInfo);
-						return;
-					}
-				}
-			}
-
-			InitializeFileEditor(windowHandle, fileInfo);
-		}
-		else // There's an error.
-		{
-			LPTSTR messageText = NULL;
-
-			switch (ResultErrorCode(result))
-			{
-				case FILE_CANT_OPEN:
-					messageText = TEXT("The file could not be opened. It may be open in another program.");
-					break;
-				case FILE_NOT_WAVE:
-					messageText = TEXT("The file is not a WAVE file.");
-					break;
-				case FILE_BAD_WAVE:
-					messageText = TEXT("The file is not entirely compliant with the WAVE format specifications.");
-					break;
-				case FILE_BAD_FORMAT:
-					messageText = TEXT("The file uses an unsupported audio format.");
-					break;
-				case FILE_BAD_BITDEPTH:
-					messageText = TEXT("The file uses an unsupported bit depth.");
-					break;
-				case FILE_BAD_FREQUENCY:
-					messageText = TEXT("The file uses an unsupported sample rate.");
-					break;
-				case FILE_BAD_SIZE:
-					messageText = TEXT("The file size could not be determined.");
-					break;
-				case FILE_BAD_SAMPLES:
-					messageText = TEXT("The file is too short to be edited.");
-					break;
-				case FILE_MISC_ERROR:
-				default:
-					messageText = TEXT("A miscellaneous error occured.");
-					break;
-			}
-
-			MessageBox(windowHandle, messageText, NULL, MB_OK | MB_ICONERROR);
-		}
+		FileOpen(filename, windowHandle);
 	}
 	else // GetOpenFileName failed.
 	{
@@ -726,6 +726,84 @@ void FileOpen(HWND windowHandle)
 		{
 			MessageBox(windowHandle, TEXT("Path name exceeds the upper limit of ") TXStringify(MAX_PATH) TEXT(" characters"), NULL, MB_OK | MB_ICONERROR);
 		}
+	}
+}
+
+void FileOpen(LPCTSTR pathname, HWND windowHandle)
+{
+	FileInfo* fileInfo;
+	ReadWaveResult result = ReadWaveFile(&fileInfo, pathname);
+
+	if (!ResultHasError(result))
+	{
+		if (ResultHasWarning(result))
+		{
+			if (ResultWarningCode(result) & FILE_CHUNK_WARNING)
+			{
+				int choice = MessageBox(windowHandle,
+										TEXT("The file contains some information which is ignored by this program, which may lead to unexpected results."),
+										TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
+
+				if (choice == IDCANCEL)
+				{
+					CloseWaveFile(fileInfo);
+					return;
+				}
+			}
+
+			if (ResultWarningCode(result) & FILE_CHAN_WARNING)
+			{
+				int choice = MessageBox(windowHandle,
+										TEXT("The file contains more channels than this program supports. You will only be able to edit some of the channels."),
+										TEXT("Warning"), MB_OKCANCEL | MB_ICONWARNING);
+
+				if (choice == IDCANCEL)
+				{
+					CloseWaveFile(fileInfo);
+					return;
+				}
+			}
+		}
+
+		InitializeFileEditor(windowHandle, fileInfo);
+	}
+	else // There's an error.
+	{
+		LPTSTR messageText = NULL;
+
+		switch (ResultErrorCode(result))
+		{
+			case FILE_CANT_OPEN:
+				messageText = TEXT("The file could not be opened. It may be open in another program.");
+				break;
+			case FILE_NOT_WAVE:
+				messageText = TEXT("The file is not a .wav file.");
+				break;
+			case FILE_BAD_WAVE:
+				messageText = TEXT("The file is not entirely compliant with the .wav format specifications.");
+				break;
+			case FILE_BAD_FORMAT:
+				messageText = TEXT("The file uses an unsupported audio format.");
+				break;
+			case FILE_BAD_BITDEPTH:
+				messageText = TEXT("The file uses an unsupported bit depth.");
+				break;
+			case FILE_BAD_FREQUENCY:
+				messageText = TEXT("The file uses an unsupported sample rate.");
+				break;
+			case FILE_BAD_SIZE:
+				messageText = TEXT("The file size could not be determined.");
+				break;
+			case FILE_BAD_SAMPLES:
+				messageText = TEXT("The file is too short to be edited.");
+				break;
+			case FILE_MISC_ERROR:
+			default:
+				messageText = TEXT("A miscellaneous error occured.");
+				break;
+		}
+
+		MessageBox(windowHandle, messageText, NULL, MB_OK | MB_ICONERROR);
 	}
 }
 
@@ -792,10 +870,7 @@ void FileSaveAs(HWND windowHandle)
 		if (GetSaveFileName(&ofn))
 		{
 			// Appending .wav to the end of the path if it isn't there.
-			size_t pathLen = _tcslen(filename);
-
-			if ((pathLen < 4 || _tcscmp(&(filename[pathLen - 4]), TEXT(".wav")) != 0) &&
-				(pathLen < 5 || _tcscmp(&(filename[pathLen - 5]), TEXT(".wave")) != 0))
+			if (!HasWaveExtension(filename))
 			{
 				_tcscat_s(filename, MAX_PATH, TEXT(".wav"));
 			}
@@ -980,11 +1055,22 @@ void ApplyModificationFromInput(HWND windowHandle)
 		return;
 	}
 
+	// Modifications act on the fourier graph so we must switch domains first.
 	SetChannelDomain(currentChannel, FREQUENCY_DOMAIN);
+
+	// All modifications on the redo list are lost when you apply a new modificatio, but a new modification is allocated which can by coincidence get allocated exactly over one of them.
+	// If it gets allocated where fileEditor.currentSaveState points to, we'll have no way to know that the current save state is lost. So we have to check this before applying the modification.
+	char losingSaveState = IsRedoable(fileEditor.modificationStack, fileEditor.currentSaveState);
 
 	if (ApplyModification(fromFreqInt, toFreqInt, changeType, changeAmount, smoothing, currentChannel, fileEditor.channelsData, &(fileEditor.modificationStack)))
 	{
 		PlotAndDisplayChannelGraphs(currentChannel);
+		
+		if (losingSaveState)
+		{
+			fileEditor.currentSaveState = NULL;
+		}
+
 		UpdateWindowTitle();
 		UpdateUndoRedoState();
 	}
@@ -1036,13 +1122,22 @@ void InitializeFileEditor(HWND windowHandle, FileInfo* fileInfo)
 		fileEditor.waveformGraphs = calloc(relevantChannels, sizeof(HBITMAP));
 		fileEditor.fourierGraphs = calloc(relevantChannels, sizeof(HBITMAP));
 		fileEditor.fourierGraphsPeaks = malloc(relevantChannels * sizeof(unsigned short));
-		fileEditor.graphingDC = CreateCompatibleDC(NULL);
 		fileEditor.currentSaveState = fileEditor.modificationStack;
 
-		// There's no reason to delete and recreate this between different files. The fact that we only allocate it once means we have to be careful to deallocate it exactly once, though, meaning not in CloseFileEditor.
+		// In here are things that are allocated once and kept until the program ends instead of being specific to each file.
+		// The fact that we only allocate these once means we have to be careful to deallocate it exactly once, meaning not in CloseFileEditor.
 		if (fileEditor.graphingDC == NULL)
 		{
 			fileEditor.graphingDC = CreateCompatibleDC(NULL);
+			fileEditor.currentFourierDC = CreateCompatibleDC(NULL);
+			fileEditor.selectionBrush = CreateSolidBrush(FOURIER_SELECTION_COLOR);
+		}
+
+		// We plot all channels on file open because I think having a long loading wait when you open the file but no load times when swapping between channels is a nicer user experience than plotting lazily.
+		// The channels are plotted before PaintFileEditor is called because it's a long computation and painting them after the file editor is painted lets the user see the file editor only partially painted.
+		for (unsigned short i = 0; i < relevantChannels; i++)
+		{
+			PlotChannelGraphs(i);
 		}
 
 		PaintFileEditor();
@@ -1061,7 +1156,6 @@ void PaintFileEditor()
 		PaintFileEditorPermanents();
 	}
 
-	ResetFileEditorPermanents();
 	PaintFileEditorTemporaries();
 }
 
@@ -1079,7 +1173,7 @@ void PaintFileEditorPermanents()
 	unsigned int waveformUnitsYBasePos = WAVEFORM_GRAPH_Y_POS - (STATIC_TEXT_HEIGHT / 2);
 
 	CreateWindow(WC_STATIC, TEXT("Waveform:"), WS_CHILD | WS_VISIBLE,
-		graphXPos, WAVEFORM_GRAPH_Y_POS - STATIC_TEXT_HEIGHT - 8, 200, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+		graphXPos, WAVEFORM_GRAPH_Y_POS - STATIC_TEXT_HEIGHT - 8, 1000, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	CreateWindow(WC_STATIC, TEXT("1"), WS_CHILD | WS_VISIBLE | SS_RIGHT,
 		unitsXPos, waveformUnitsYBasePos, STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
@@ -1195,7 +1289,15 @@ void PaintFileEditorPermanents()
 
 void PaintFileEditorTemporaries()
 {
-	// Filling the tab control with the names of the channels this file has instead of the old one.
+	// Resetting all the input controls to their default values.
+	SendMessage(fileEditor.fromFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
+	SendMessage(fileEditor.toFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
+	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0);
+	SendMessage(fileEditor.changeAmountTextbox, WM_SETTEXT, 0, (LPARAM)TEXT("0.000"));
+	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(DEFAULT_SMOOTHING == MAX_SMOOTHING ? TEXT("1.000") : TEXT("0.") TXStringify(DEFAULT_SMOOTHING)));
+	SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING);
+	
+	// Filling the tab control with the names of the channels this file has instead of the old one. We also plot graphs along the way.
 	TabCtrl_DeleteAllItems(fileEditor.channelTabs);
 
 	TCITEM tab;
@@ -1213,7 +1315,7 @@ void PaintFileEditorTemporaries()
 
 	SetWindowPos(fileEditor.channelTabs, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE); // Editing the tab control brings it to front. This fixes that.
 	UpdateWindowTitle();
-	PlotAndDisplayChannelGraphs(0);
+	DisplayChannelGraphs(0);
 
 	unsigned int nyquist = GetNyquistInt(fileEditor.fileInfo);
 
@@ -1235,17 +1337,6 @@ void PaintFileEditorTemporaries()
 		SendMessage(fileEditor.minFreqStatic, WM_SETTEXT, 0, (LPARAM)TEXT("0KHz"));
 		SendMessage(fileEditor.maxFreqStatic, WM_SETTEXT, 0, (LPARAM)buffer);
 	}
-}
-
-void ResetFileEditorPermanents()
-{
-	// Resetting all the input controls to their default values.
-	SendMessage(fileEditor.fromFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
-	SendMessage(fileEditor.toFreqTextbox, WM_SETTEXT, 0, (LPARAM)TEXT(""));
-	SendMessage(fileEditor.changeTypeDropdown, CB_SETCURSEL, 0, 0);
-	SendMessage(fileEditor.changeAmountTextbox, WM_SETTEXT, 0, (LPARAM)TEXT("0.000"));
-	SendMessage(fileEditor.smoothingTextbox, WM_SETTEXT, 0, (LPARAM)(DEFAULT_SMOOTHING == MAX_SMOOTHING ? TEXT("1.000") : TEXT("0.") TXStringify(DEFAULT_SMOOTHING)));
-	SendMessage(fileEditor.smoothingTrackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)DEFAULT_SMOOTHING);
 }
 
 void SetChannelDomain(unsigned short channel, FunctionDomain domain)
@@ -1397,10 +1488,10 @@ void PlotChannelFourier(unsigned short channel)
 	unsigned long long stepSize = GetPlottingStepSize();																											\
 																																									\
 	/* We'll be plotting the graph such that the highest pixel represents the global maximum point.*/																\
-	precision##Real globalMax = cabs_##precision##Complex(GetMax_##precision##Complex(func, 0, length, stepSize)); 													\
+	precision##Real globalMax = abs_##precision##Complex(GetMax_##precision##Complex(func, 0, length, stepSize)); 													\
 																																									\
 	/* Clamping the value so it isn't smaller than the decibel reference, which is the smallest number that we plot while globalMax is the highest.*/				\
-	globalMax = Clamp##precision(globalMax, FOURIER_DECIBEL_REFERENCE, MAX_##precision##Real);																		\
+	globalMax = Clamp(globalMax, FOURIER_DECIBEL_REFERENCE, MAX_##precision##Real);																					\
 																																									\
 	/* Converting to logarithmic scale, and add a little so the graph peak isn't exactly on the last pixel.*/														\
 	globalMax = LinearToDecibel##precision##Real(globalMax, FOURIER_DECIBEL_REFERENCE) + CAST(1.5, precision##Real); 												\
@@ -1422,7 +1513,7 @@ void PlotChannelFourier(unsigned short channel)
 		unsigned long long endSample = ClampInt(llceil_DoubleReal(binSize * (i + 1)), 0, length);																	\
 																																									\
 		/* Finding the min and max values of all samples in the range [startSample, endSample).*/																	\
-		precision##Real max = cabs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, stepSize));										\
+		precision##Real max = abs_##precision##Complex(GetMax_##precision##Complex(func, startSample, endSample, stepSize));										\
 																																									\
 		/* Converting to logarithmic scale. Had a bug with the integer conversion when this returns -INF, so I only proceed if max is above the reference.*/		\
 		max = max < FOURIER_DECIBEL_REFERENCE ? 0.0 : LinearToDecibel##precision##Real(max, FOURIER_DECIBEL_REFERENCE); 											\
@@ -1554,6 +1645,7 @@ void CloseFileEditor()
 
 	fileEditor.fileInfo = NULL;
 	fileEditor.channelsData = NULL;
+	fileEditor.soundEditorCache = NULL;
 	fileEditor.channelsDomain = NULL;
 	fileEditor.fourierGraphsPeaks = NULL;
 	fileEditor.waveformGraphs = NULL;
@@ -1675,7 +1767,7 @@ char IsEditorOpen()
 
 char HasUnsavedChanges()
 {
-	// TODO: if the current save state was freed, it's possible something else was allocated in its stead (however unlikely) which would cause this to not fire even though we want it to.
+	// When the modification stack is null, no file is open and it's convenient to return false in that case.
 	return fileEditor.modificationStack != NULL && fileEditor.modificationStack != fileEditor.currentSaveState;
 }
 
@@ -1924,9 +2016,9 @@ void ProcessSelectFileOptionCommand(HWND windowHandle, WPARAM wparam, LPARAM lpa
 					FileNew(windowHandle);
 					break;
 				case FILE_ACTION_OPEN:
-					FileOpen(windowHandle);
+					PromptFileOpen(windowHandle);
 
-					// If the FileOpen operation was a success, closing this menu.
+					// If the file open operation was a success, closing this menu.
 					if (fileEditor.fileInfo != NULL)
 					{
 						CloseSelectFileOption(windowHandle);
@@ -2001,7 +2093,7 @@ void SyncTrackbarToTextbox(HWND trackbar, HWND textbox)
 	{
 		long min = SendMessage(trackbar, TBM_GETRANGEMIN, 0, 0);
 		long max = SendMessage(trackbar, TBM_GETRANGEMAX, 0, 0);
-		val = ClampInt(val, min, max);
+		val = Clamp(val, min, max);
 		SendMessage(trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)val);
 	}
 }
@@ -2112,14 +2204,23 @@ LRESULT CALLBACK FourierGraphWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
 
 			if (fileEditor.fourierGraphs[channel] != NULL)
 			{
-				HBRUSH selectionColorBrush = CreateSolidBrush(FOURIER_SELECTION_COLOR);
-				HBRUSH oldBrush = SelectBrush(dc, selectionColorBrush);
-				HGDIOBJ oldSelection = SelectObject(fileEditor.graphingDC, fileEditor.fourierGraphs[channel]);
-				COLORREF oldBkColor = SetBkColor(dc, FOURIER_BACKGROUND_COLOR);
-				COLORREF oldTextColor = SetTextColor(dc, FOURIER_FOREGROUND_COLOR);
+				// I would like to allocate this at InitializeFileEditor and not here, but the bitmap can't created to be compatible with fileEditor.currentFourierDC because it's initially monochrome.
+				// The bitmap needs to be created to be compatible with the static control's DC, and that static control isn't created yet when the other stuff is allocated so we allocate it here.
+				if (fileEditor.currentFourierGraph == NULL)
+				{
+					fileEditor.currentFourierGraph = CreateCompatibleBitmap(dc, GRAPH_WIDTH, GRAPH_HEIGHT);
+				}
 
+				// Selecting everything we need in order to do this.
+				HGDIOBJ oldGraphingDCSelection = SelectObject(fileEditor.graphingDC, fileEditor.fourierGraphs[channel]);
+				HBRUSH oldFourierDCBrush = SelectBrush(fileEditor.currentFourierDC, fileEditor.selectionBrush);
+				HGDIOBJ oldFourierDCSelection = SelectObject(fileEditor.currentFourierDC, fileEditor.currentFourierGraph);
+				COLORREF oldFourierDCBkColor = SetBkColor(fileEditor.currentFourierDC, FOURIER_BACKGROUND_COLOR);
+				COLORREF oldFourierDCTextColor = SetTextColor(fileEditor.currentFourierDC, FOURIER_FOREGROUND_COLOR);
+
+				// First, we blit the graph with the selection into our buffer, currentFourierGraph. This double-buffering fixes flickering when you select a frequency range.
 				// Painting on the graph.
-				BitBlt(dc, 0, 0, GRAPH_WIDTH, GRAPH_HEIGHT, fileEditor.graphingDC, 0, 0, SRCCOPY);
+				BitBlt(fileEditor.currentFourierDC, 0, 0, GRAPH_WIDTH, GRAPH_HEIGHT, fileEditor.graphingDC, 0, 0, SRCCOPY);
 
 				// Painting on the current selection.
 				double from = GetTextboxDouble(fileEditor.fromFreqTextbox);
@@ -2130,14 +2231,18 @@ LRESULT CALLBACK FourierGraphWindowProc(HWND windowHandle, UINT msg, WPARAM wpar
 					double nyquist = GetNyquistDouble(fileEditor.fileInfo);
 					int fromPixel = ClampInt((from / nyquist) * (GRAPH_WIDTH - 1),  0, GRAPH_WIDTH - 1);
 					int toPixel = ClampInt((to / nyquist) * GRAPH_WIDTH, 0, GRAPH_WIDTH);
-					BitBlt(dc, fromPixel, 0, toPixel - fromPixel, GRAPH_HEIGHT, NULL, 0, 0, PATINVERT);
+					BitBlt(fileEditor.currentFourierDC, fromPixel, 0, toPixel - fromPixel, GRAPH_HEIGHT, NULL, 0, 0, PATINVERT);
 				}
 
-				SetTextColor(dc, oldTextColor);
-				SetBkColor(dc, oldBkColor);
-				SelectObject(fileEditor.graphingDC, oldSelection);
-				SelectBrush(dc, oldBrush);
-				DeleteBrush(selectionColorBrush);
+				// Now we blit the fully painted thing onto the static control.
+				BitBlt(dc, 0, 0, GRAPH_WIDTH, GRAPH_HEIGHT, fileEditor.currentFourierDC, 0, 0, SRCCOPY);
+
+				// Restoring all selections that we changed.
+				SetTextColor(fileEditor.currentFourierDC, oldFourierDCTextColor);
+				SetBkColor(fileEditor.currentFourierDC, oldFourierDCBkColor);
+				SelectObject(fileEditor.currentFourierDC, oldFourierDCSelection);
+				SelectBrush(fileEditor.currentFourierDC, oldFourierDCBrush);
+				SelectObject(fileEditor.graphingDC, oldGraphingDCSelection);
 			}
 
 			EndPaint(windowHandle, &ps);
@@ -2172,6 +2277,114 @@ char IsInWindow(POINT point, HWND window)
 	rect.top = topLeft.y;
 
 	return PtInRect(&rect, point);
+}
+
+// This function was taken from here: http://alter.org.ua/docs/win/args/.
+// The reason is that Win32 has a function CommandLineToArgvW, but no CommandLineToArgvA.
+LPTSTR* SplitCommandLine(LPTSTR cmdLine, int* _argc)
+{
+	LPTSTR* argv;
+	LPTSTR _argv;
+	ULONG len;
+	ULONG argc;
+	TCHAR a;
+	ULONG i, j;
+
+	BOOLEAN in_QM;
+	BOOLEAN in_TEXT;
+	BOOLEAN in_SPACE;
+
+	len = _tcslen(cmdLine);
+	i = ((len + 2) / 2) * sizeof(PVOID) + sizeof(PVOID);
+
+	argv = (LPTSTR*)GlobalAlloc(GMEM_FIXED, i + (len + 2) * sizeof(TCHAR));
+
+	_argv = (LPTSTR)(((PUCHAR)argv) + i);
+
+	argc = 0;
+	argv[argc] = _argv;
+	in_QM = FALSE;
+	in_TEXT = FALSE;
+	in_SPACE = TRUE;
+	i = 0;
+	j = 0;
+
+	while ((a = cmdLine[i]))
+	{
+		if (in_QM)
+		{
+			if (a == TEXT('\"'))
+			{
+				in_QM = FALSE;
+			}
+			else
+			{
+				_argv[j] = a;
+				j++;
+			}
+		}
+		else
+		{
+			switch(a)
+			{
+				case TEXT('\"'):
+					in_QM = TRUE;
+					in_TEXT = TRUE;
+
+					if (in_SPACE)
+					{
+						argv[argc] = _argv+j;
+						argc++;
+					}
+
+					in_SPACE = FALSE;
+					break;
+				case TEXT(' '):
+				case TEXT('\t'):
+				case TEXT('\n'):
+				case TEXT('\r'):
+				
+					if (in_TEXT)
+					{
+						_argv[j] = TEXT('\0');
+						j++;
+					}
+
+					in_TEXT = FALSE;
+					in_SPACE = TRUE;
+					break;
+				default:
+					in_TEXT = TRUE;
+
+					if (in_SPACE)
+					{
+						argv[argc] = _argv+j;
+						argc++;
+					}
+
+					_argv[j] = a;
+					j++;
+					in_SPACE = FALSE;
+					break;
+			}
+		}
+
+		i++;
+	}
+
+	_argv[j] = TEXT('\0');
+	argv[argc] = NULL;
+
+	(*_argc) = argc;
+	return argv;
+}
+
+char HasWaveExtension(LPTSTR pathname)
+{
+	size_t pathLen = _tcslen(pathname);
+
+	return !((	(pathLen < 4 || _tcscmp(&(pathname[pathLen - 4]), TEXT(".wav")) != 0) &&
+				(pathLen < 5 || _tcscmp(&(pathname[pathLen - 5]), TEXT(".wave")) != 0)));
 }
 
 #pragma endregion // Misc.

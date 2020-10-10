@@ -22,10 +22,10 @@ typedef struct Modification
 } Modification;
 
 // In the future this could be expanded into a struct containing more than just the twiddle factors as a function.
-typedef struct SoundEditorCache
+typedef struct
 {
 	Function* twiddleFactors; 		// An array of all the twiddle factors up to the N/2'th one when N is the length of the complex interleaved functions.
-	unsigned long long length;		// The length of complex interleaved functions this cache is for. This is assumed to be a power of two and at least 4.
+	unsigned long long length;		// The length of complex interleaved functions this cache is for. This is assumed to be a power of two and at least 8.
 	unsigned long long logLength;	// The log2 of the length field above.
 } SoundEditorCache;
 
@@ -64,6 +64,12 @@ unsigned short GetRedoChannel(Modification*);
 
 // Returns the channel that would be affected by the undo button at this time. Assumes that CanUndo is true, do not call this otherwise.
 unsigned short GetUndoChannel(Modification*);
+
+// Returns nonzero iff the given modification is on the list of modifications to undo in the modification stack.*/
+char IsUndoable(Modification*, Modification*);
+
+// Returns nonzero iff the given modification is on the list of modifications to redo in the modification stack.*/
+char IsRedoable(Modification*, Modification*);
 
 // Allocates and initializes a new modification stack.
 void InitializeModificationStack(Modification**);

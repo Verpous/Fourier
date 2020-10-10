@@ -41,6 +41,13 @@ precision##Complex RootOfUnity_##precision##Complex(unsigned long long k, precis
 	return PolarToCartesian_##precision##Complex(1.0, (CAST(-2.0 * M_PI, precision##Real) * k) / N);													\
 }																																						\
 																																						\
+/* Like conjugate, but flips the real part instead of the imaginary.*/																					\
+ __attribute((always_inline)) inline																													\
+precision##Complex FlipReal_##precision##Complex(precision##Complex x)																					\
+{																																						\
+	return -creal_##precision##Complex(x) + I * cimag_##precision##Complex(x);																			\
+}																																						\
+																																						\
 SoundEditorCache* InitializeSoundEditor_##precision##Complex(Function_##precision##Complex* f)															\
 {																																						\
 	/* At first we have to allocate a bunch of stuff.*/																									\
@@ -60,9 +67,9 @@ SoundEditorCache* InitializeSoundEditor_##precision##Complex(Function_##precisio
 	}																																					\
 																																						\
 	unsigned long long length = NumOfSamples(f);																										\
-	unsigned long long halfLength = length / 2;																											\
+	unsigned long long quarterLength = length / 4;																										\
 																																						\
-	if (!AllocateFunctionInternals_##precision##Complex(cache->twiddleFactors, halfLength))																\
+	if (!AllocateFunctionInternals_##precision##Complex(cache->twiddleFactors, quarterLength + 1))														\
 	{																																					\
 		DeallocateFunctionInternals_##precision##Complex(cache->twiddleFactors);																		\
 		free(cache->twiddleFactors);																													\
@@ -79,8 +86,9 @@ SoundEditorCache* InitializeSoundEditor_##precision##Complex(Function_##precisio
 	precision##Real lengthReal = length;																												\
 																																						\
 	get(twiddleFactors, 0) = 1.0;																														\
+	get(twiddleFactors, quarterLength) = -I;																											\
 																																						\
-	for (unsigned long long i = 1; i < halfLength; i++)																									\
+	for (unsigned long long i = 1; i < quarterLength; i++)																								\
 	{																																					\
 		get(twiddleFactors, i) = RootOfUnity_##precision##Complex(i, lengthReal);																		\
 	}																																					\
@@ -126,9 +134,8 @@ void ForwardPostprocessSymmetric_##precision##Complex(precision##Complex* sample
 	/* Can't just dereference these when I need them because their values get changed and they both need both.*/										\
 	precision##Complex sampleVal = *sample, oppositeSampleVal = *oppositeSample;																		\
 																																						\
-	/* root is assumed to be equal to RootOfUnity(k, 2N) where k is the index of 'sample' and N is the length of the interleaved function.*/			\
-	/* I did some math, and the following expression equals RootOfUnity(N - k, 2N). N - k is assumed to be the index of 'oppositeSample'.*/				\
-	precision##Complex oppositeRoot = CAST(-1.0, precision##Complex) / root; 																			\
+	/* RootOfUnity(length-k, 2*length) = FlipReal(RootOfUnity(k, 2*length)).*/																			\
+	precision##Complex oppositeRoot = FlipReal_##precision##Complex(root); 																				\
 	*sample = ForwardPostprocess_##precision##Complex(sampleVal, oppositeSampleVal, root);																\
 	*oppositeSample = ForwardPostprocess_##precision##Complex(oppositeSampleVal, sampleVal, oppositeRoot); 												\
 }																																						\
@@ -140,24 +147,32 @@ void RealInterleavedFFT_##precision##Complex(Function_##precision##Complex f, So
 																																						\
 	/* These get used often.*/																															\
 	unsigned long long halfLen = len / 2;																												\
+	unsigned long long quarterLen = len / 4;																											\
 																																						\
 	FFT_##precision##Complex(f, cache);																													\
 																																						\
 	/* Applying postprocessing to extract the DFT of the original function from the DFT of the interleaved one.*/										\
 	/* The math is according to the document linked in the header for this function.*/																	\
 	/* get(f, 0) is a special case because there is no get(f, len - 0).*/																				\
+	/* Note: get(f, len / 2) is also a special case in that it doesn't need any extra processing. It already has the right value.*/						\
 	get(f, 0) = ForwardPostprocess_##precision##Complex(get(f, 0), get(f, 0), 1.0);																		\
 																																						\
-	/* Note: get(f, len / 2) doesn't need any extra processing. It already has the right value.*/														\
 	/* We iterate over half the samples and postprocess 2 samples in each go because each k'th sample shares computations with the len-k'th one.*/		\
 	/* This computation uses RootOfUnity(k, 2*len) for each 1<=k<=2*len. But our cache only contains RootOfUnity(k, len) for each 1<=k<=len/2.*/		\
-	/* If we had RootOfUnity(k, 2*len) for each 1<=k<=len/2, it's easy to extract RootOfUnity(len - k, 2*len). The math is explained later.*/			\
-	/* To overcome the first hurdle, that we have roots for length-N and not length-2N, we split postprocessing into even and odd indices.*/			\
-	for (unsigned long long k = 1; k < halfLen; k += 2)																									\
+	/* We do a bunch of stuff to overcome this that will be explained later. The first is that we split iteration for even and odd indices.*/			\
+	for (unsigned long long k = 1; k <= quarterLen; k += 2)																								\
 	{																																					\
-		/* For odd indices, RootOfUnity(k, 2*len)=csqrt(RootOfUnity(k, len)), and we have the root inside.*/											\
-		precision##Complex root = csqrt_##precision##Complex(get(twiddleFactors, k));																	\
-		ForwardPostprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), root);															\
+		precision##Complex root = get(twiddleFactors, k);																								\
+																																						\
+		/* Note that this loop only runs for odd 1<=k<=quarterLen values. We cover the indices k and halfLen-k in each iteration.*/						\
+		/* This first root is for the index k. RootOfUnity(k, 2*len)=sqrt(RootOfUnity(k, len)).*/														\
+		precision##Complex rootBeforeHalf = sqrt_##precision##Complex(root);																			\
+																																						\
+		/* This second root is for the index halfLen-k. RootOfUnity(halfLen-k, 2*len)=sqrt(FlipReal(RootOfUnity(k, len))).*/							\
+		precision##Complex rootAfterHalf = sqrt_##precision##Complex(FlipReal_##precision##Complex(root));												\
+																																						\
+		ForwardPostprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), rootBeforeHalf);													\
+		ForwardPostprocessSymmetric_##precision##Complex(&get(f, halfLen - k), &get(f, halfLen + k), rootAfterHalf);									\
 	}																																					\
 																																						\
 	for (unsigned long long k = 2; k < halfLen; k += 2)																									\
@@ -187,31 +202,34 @@ void BackwardPreprocessSymmetric_##precision##Complex(precision##Complex* sample
 	/* Can't just dereference these when I need them because their values get changed and they both need both.*/										\
 	precision##Complex sampleVal = *sample, oppositeSampleVal = *oppositeSample;																		\
 																																						\
-	/* root is assumed to be equal to RootOfUnity(k, 2N) where k is the index of 'sample' and N is the length of the interleaved function.*/			\
-	/* I did some math, and the following expression equals RootOfUnity(N - k, 2N). N - k is assumed to be the index of 'oppositeSample'.*/				\
-	precision##Complex oppositeRoot = CAST(-1.0, precision##Complex) / root; 																			\
+	/* RootOfUnity(length-k, 2*length) = FlipReal(RootOfUnity(k, 2*length)).*/																			\
+	precision##Complex oppositeRoot = FlipReal_##precision##Complex(root);																				\
 	*sample = BackwardPreprocess_##precision##Complex(sampleVal, oppositeSampleVal, root);																\
 	*oppositeSample = BackwardPreprocess_##precision##Complex(oppositeSampleVal, sampleVal, oppositeRoot); 												\
 }																																						\
+																																						\
 void InverseRealInterleavedFFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache* cache)											\
 {																																						\
 	unsigned long long len = cache->length;																												\
 	Function_##precision##Complex twiddleFactors = *CAST(cache->twiddleFactors, Function_##precision##Complex*);										\
 																																						\
-	/* These get used often.*/																															\
+	/* There's a lot of shit to explain in this function, but it's identical to what's already explained in RealInterleavedFFT.*/						\
+	/* Refer to the comments there for more information.*/																								\
 	unsigned long long halfLen = len / 2;																												\
+	unsigned long long quarterLen = len / 4;																											\
 																																						\
 	/* Applying preprocessing to revert back to the DFT of the interleaved function.*/																	\
 	/* The math is from the same document as the one I used for the forward transform.*/																\
-	/* get(f, 0) is a special case because there is no get(f, len - 0).*/																				\
 	get(f, 0) = BackwardPreprocess_##precision##Complex(get(f, 0), get(f, 0), 1.0);  																	\
 																																						\
-	/* There's a lot of shit to explain about this, but it's identical to what's already explained in RealInterleavedFFT.*/								\
-	/* Refer to the comments there for more information.*/																								\
-	for (unsigned long long k = 1; k < halfLen; k += 2)																									\
+	for (unsigned long long k = 1; k <= quarterLen; k += 2)																								\
 	{																																					\
-		precision##Complex root = csqrt_##precision##Complex(get(twiddleFactors, k));																	\
-		BackwardPreprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), root);															\
+		precision##Complex root = get(twiddleFactors, k);																								\
+		precision##Complex rootBeforeHalf = sqrt_##precision##Complex(root);																			\
+		precision##Complex rootAfterHalf = sqrt_##precision##Complex(FlipReal_##precision##Complex(root));												\
+																																						\
+		BackwardPreprocessSymmetric_##precision##Complex(&get(f, k), &get(f, len - k), rootBeforeHalf);													\
+		BackwardPreprocessSymmetric_##precision##Complex(&get(f, halfLen - k), &get(f, halfLen + k), rootAfterHalf);									\
 	}																																					\
 																																						\
 	for (unsigned long long k = 2; k < halfLen; k += 2)																									\
@@ -241,6 +259,7 @@ void FFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache*
 	/* We start from 2 because the level with length-1 sub-trees is trivial and assumed to already be contained in the array.*/							\
 	unsigned long long stride = 2;																														\
 	unsigned long long halfStride = 1;																													\
+	unsigned long long quarterStride = 0;																												\
 	unsigned long long lenDivStride = halfLen;																											\
 																																						\
 	/* Each iteration of this loop climbs another level up the recursion tree.*/																		\
@@ -252,7 +271,15 @@ void FFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache*
 		{																																				\
 			/* Caching repeatedly-used calculations.*/																									\
 			unsigned long long kPlusHalfStride = k + halfStride; 																						\
-			precision##Complex factor = get(twiddleFactors, (k * lenDivStride) % halfLen);																\
+																																						\
+			/* We want to calculate RootOfUnity(k, stride), for 0<=k<halfStride, but our cache is for RootOfUnity(k, len) for 0<=k<=len/4.*/			\
+			/* First we use the equation RootOfUnity(k, stride) = RootOfUnity(k*lenDivStride, N) to cover the cases 0<=k<=quarterStride.*/				\
+			/* If k > quarterStride, we use the fact that RootOfUnity(k, N) = FlipReal(RootOfUnity((N/2) - k, N)). Boom. Math.*/						\
+			/* I could split the for loop into two to save on this branch here, but it doesn't really save anything,*/									\
+			/* we'd have to write the same code twice, and it might even hurt it because of instruction caching.*/										\
+			precision##Complex factor = k <= quarterStride ?																							\
+										get(twiddleFactors, (k * lenDivStride)) :																		\
+										FlipReal_##precision##Complex(get(twiddleFactors, halfLen - (k * lenDivStride)));								\
 																																						\
 			/* Each iteration of this loop moves to the next tree in the current level.*/																\
 			for (unsigned long long i = 0; i < len; i += stride)																						\
@@ -268,6 +295,7 @@ void FFT_##precision##Complex(Function_##precision##Complex f, SoundEditorCache*
 		/* In the next level, trees will be twice as big.*/																								\
 		stride *= 2;																																	\
 		halfStride *= 2;																																\
+		quarterStride = halfStride / 2; /* Can't just multiply by 2 because this starts at 0.*/															\
 		lenDivStride /= 2;																																\
 	}																																					\
 }																																						\
@@ -368,7 +396,7 @@ unsigned long long BitReverse(unsigned int digits, unsigned long long n)
 	return reversed;
 }
 
-char ApplyModification(unsigned long long fromSample, unsigned long long toSample, ChangeType changeType, double changeAmount, double smoothing, unsigned short channel, Function **channelsData, Modification **modificationStack)
+char ApplyModification(unsigned long long fromSample, unsigned long long toSample, ChangeType changeType, double changeAmount, double smoothing, unsigned short channel, Function** channelsData, Modification** modificationStack)
 {
 	// Deallocating changes that were applied and then undone. A new modification means a new branching of the modifications tree, and we are only interested in the path of the tree we're currently on.
 	DeallocateModificationsNextwards((*modificationStack)->next);
@@ -422,6 +450,7 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 	{																																								\
 		unsigned long long i;																																		\
 		precision##Real changeAmountMinusOne = changeAmount - 1.0; /* This number is often-used so we cache it.*/													\
+		fprintf(stderr, "applying multiplicative change of %f. Subtract 1 and it's %f.\n", changeAmount, changeAmountMinusOne);\
 																																									\
 		/* The window function is piecewise so we'll apply it in two parts.*/																						\
 		/* In the first part, 0 <= n < tukeyWidth, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
@@ -430,8 +459,10 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 		{																																							\
 			precision##Real multiplier = CAST(1.0, precision##Real) + (changeAmountMinusOne *																		\
 				(CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i))));												\
+			fprintf(stderr, "about to multiply sample[%llu]=%f%+fi and sample[%llu]=%f%+fi by %f.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), endSample - i, creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)), multiplier);\
 			get(channelData, startSample + i) *= multiplier;																										\
 			get(channelData, endSample - i) *= multiplier; /* Applying the change symmetrically.*/																	\
+			fprintf(stderr, "now they're %f%+fi and %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)));\
 		}																																							\
 																																									\
 		/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
@@ -441,15 +472,28 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 		/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
 		for (; i <= plateauEnd; i++)																																\
 		{																																							\
+			fprintf(stderr, "about to multiply sample[%llu]=%f%+fi by the change amount.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
 			get(channelData, startSample + i) *= changeAmount;																										\
+			fprintf(stderr, "now it's %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
 		}																																							\
 	}																																								\
 	else /* Additive change. This can be either add or subtract.*/																									\
 	{																																								\
 		unsigned long long i;																																		\
+\
+		unsigned long long k = length / 2;\
+		unsigned long long N = NumOfSamples(&channelData);\
+\
+		for (i = 0; i < length; i++)\
+		{\
+			precision##Real addition = changeAmount * ((1 - RootOfUnity_##precision##Complex(k + i, 1)) / (1 - RootOfUnity_##precision##Complex(k + i, N)));\
+			precision##Real val = get(channelData, startSample + i);\
+			precision##Real magnitude = Clamp##precision(abs_##precision##Complex(val) + addition, 0.0, INFINITY);\
+			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude, carg_##precision##Complex(val));	\
+		}\
 																																									\
 		/* The window function is piecewise so we'll apply it in two parts.*/																						\
-		/* In the first part, 0 <= n < tukeyWindow, w[n] and w[length - 1 - n] are equal to 0.5 * 0.5 - 0.5 * cos(piDivWidth * n)).*/								\
+		/* In the first part, 0 <= n < tukeyWindow, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
 		for (i = 0; i < plateauStart; i++)																															\
 		{																																							\
 			/* Calculating the magnitude we want to add.*/																											\
@@ -460,8 +504,8 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 			precision##Real val2 = get(channelData, endSample - i);																									\
 																																									\
 			/* Calculating the new magnitudes of the samples, which are the old ones + the addition clamped at 0.*/													\
-			precision##Real magnitude1 = Clamp##precision(cabs_##precision##Complex(val1) + addition, 0.0, INFINITY);												\
-			precision##Real magnitude2 = Clamp##precision(cabs_##precision##Complex(val2) + addition, 0.0, INFINITY);												\
+			precision##Real magnitude1 = Clamp##precision(abs_##precision##Complex(val1) + addition, 0.0, INFINITY);												\
+			precision##Real magnitude2 = Clamp##precision(abs_##precision##Complex(val2) + addition, 0.0, INFINITY);												\
 																																									\
 			/* Setting the samples to have the same phase as before but with the new magnitudes.*/																	\
 			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude1, carg_##precision##Complex(val1));									\
@@ -476,7 +520,7 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 		for (; i <= plateauEnd; i++)																																\
 		{																																							\
 			precision##Real val = get(channelData, startSample + i);																								\
-			precision##Real magnitude = Clamp##precision(cabs_##precision##Complex(val) + changeAmount, 0.0, INFINITY);												\
+			precision##Real magnitude = Clamp##precision(abs_##precision##Complex(val) + changeAmount, 0.0, INFINITY);												\
 			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude, carg_##precision##Complex(val));									\
 		}																																							\
 	}
@@ -548,6 +592,40 @@ unsigned short GetRedoChannel(Modification* modificationStack)
 unsigned short GetUndoChannel(Modification* modificationStack)
 {
 	return modificationStack->channel;
+}
+
+char IsUndoable(Modification* modificationStack, Modification* modification)
+{
+	Modification* current = modificationStack;
+
+	while (CanUndo(current))
+	{
+		if (current == modification)
+		{
+			return TRUE;
+		}
+
+		current = current->prev;
+	}
+
+	return FALSE;
+}
+
+char IsRedoable(Modification* modificationStack, Modification* modification)
+{
+	Modification* current = modificationStack;
+	
+	while (CanRedo(current))
+	{
+		if (current->next == modification)
+		{
+			return TRUE;
+		}
+
+		current = current->next;
+	}
+
+	return FALSE;
 }
 
 void InitializeModificationStack(Modification** modificationStack)

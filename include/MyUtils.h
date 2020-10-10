@@ -30,6 +30,9 @@
 // Like XStringify, but the string is unicode if we're targeting unicode.
 #define TXStringify(x) TEXT(XStringify(x))
 
+// Clamps a value between two bounds. As a macro it works for all types equally.
+#define Clamp(x, min, max) ((x) < (min) ? (min) : (x) > (max) ? (max) : (x))
+
 // A generic bubblesort.
 void Bubblesort(void*, int, char (*)(void*, void*), size_t);
 
@@ -103,21 +106,21 @@ double RandRangeDouble(double min, double max)
  __attribute__((always_inline)) inline
 float ClampFloat(float val, float min, float max)
 {
-	return val > max ? max : val < min ? min : val;
+	return Clamp(val, min, max);
 }
 
 // Clamps a double-precision float between two values.
  __attribute__((always_inline)) inline
 double ClampDouble(double val, double min, double max)
 {
-	return val > max ? max : val < min ? min : val;
+	return Clamp(val, min, max);
 }
 
 // Clamps an integer between two values [inclusive, inclusive].
  __attribute__((always_inline)) inline
 long long ClampInt(long long val, long long min, long long max)
 {
-	return val > max ? max : val < min ? min : val;
+	return Clamp(val, min, max);
 }
 
 // Returns the square magnitude of a single-precision float complex.

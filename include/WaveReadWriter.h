@@ -45,31 +45,31 @@ typedef enum
 	FILE_CHAN_WARNING = 0x40000000,
 } ReadWaveResult;
 
-typedef struct ChunkHeader
+typedef struct
 {
 	FOURCC id;
 	DWORD size;
 } ChunkHeader;
 
-typedef struct WaveHeader
+typedef struct
 {
 	ChunkHeader chunkHeader;
 	FOURCC id;
 } WaveHeader;
 
-typedef struct FormatChunk
+typedef struct
 {
 	ChunkHeader header;
 	WAVEFORMATEXTENSIBLE contents;
 } FormatChunk;
 
-typedef struct WaveformSegment
+typedef struct
 {
 	ChunkHeader header;
 	DWORD relativeOffset; // The offset that the header begins in relative to the offset in the WaveformChunk this belongs to.
 } WaveformSegment;
 
-typedef struct WaveformChunk
+typedef struct
 {
 	char isList;
 	DWORD offset; // For lists, this should point to the byte after the 'wavl' FOURCC. For non-lists, this points to the first byte in the chunk header of the data chunk.
@@ -77,7 +77,7 @@ typedef struct WaveformChunk
 	WaveformSegment* segments;
 } WaveformChunk;
 
-typedef struct FileInfo
+typedef struct
 {
 	FILE* file;
 	LPTSTR path;
