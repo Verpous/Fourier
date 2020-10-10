@@ -37,7 +37,8 @@
 #define PROGRAM_EXIT 0x8008
 
 // This message tells the main window to pop the select file option dialog or open the file in the command line when the program starts.
-#define WM_STARTFILE WM_USER
+// Despite WM_USER being intended as the point from which users can safely define their own messages, that is apparently not true (see WM_GETDEFID and WM_SETDEFIF) so we start from +2.
+#define WM_STARTFILE (WM_USER + 2)
 
 // These don't need to be above 0x8000.
 #define NEW_FILE_OPTIONS_OK 1
@@ -165,7 +166,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// Entering our message loop.
 	while (GetMessage(&msg, NULL, 0, 0))
 	{
-		if (!TranslateAccelerator(mainWindowHandle, acceleratorHandle, &msg))
+		// In order to allow tabbing between controls, we need to call IsDialogMessage with the window we want to allow tabbing in. So we get the foreground window to allow tabbing in there.
+		HWND frontWindow = GetForegroundWindow();
+		
+		// It's important that we call TranslateAccelerator first otherwise IsDialogMessage eats those messages up.
+		if (!TranslateAccelerator(mainWindowHandle, acceleratorHandle, &msg) && !IsDialogMessage(frontWindow, &msg))
 		{
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
@@ -1085,7 +1090,7 @@ char PromptSaveProgress(HWND windowHandle)
 	if (HasUnsavedChanges())
 	{
 		int choice = MessageBox(windowHandle,
-								TEXT("There is unsaved progress that will be lost if you proceed without saving it. Would you like to save?"),
+								TEXT("There are unsaved changes that will be lost if you proceed without saving. Would you like to save?"),
 								TEXT("Warning"), MB_ICONWARNING | MB_YESNOCANCEL);
 
 		switch (choice)
@@ -1161,7 +1166,8 @@ void PaintFileEditor()
 
 void PaintFileEditorPermanents()
 {
-	fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS, 5, 0, MAIN_WINDOW_WIDTH - 15, MAIN_WINDOW_HEIGHT - 53, mainWindowHandle, NULL, NULL, NULL);
+	fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS | WS_TABSTOP
+		, 5, 0, MAIN_WINDOW_WIDTH - 15, MAIN_WINDOW_HEIGHT - 53, mainWindowHandle, NULL, NULL, NULL);
 
 	// Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
 	CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, MAIN_WINDOW_WIDTH - 25, MAIN_WINDOW_HEIGHT - 87, mainWindowHandle, NULL, NULL, NULL);
@@ -1218,7 +1224,7 @@ void PaintFileEditorPermanents()
 	CreateWindow(WC_STATIC, TEXT("From:"), WS_VISIBLE | WS_CHILD,
 		graphXPos, chooseFrequenciesYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER,
+	fileEditor.fromFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER | WS_TABSTOP,
 		graphXPos + CONTROL_DESCRIPTION_WIDTH, chooseFrequenciesYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.fromFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.fromFreqTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
@@ -1231,7 +1237,7 @@ void PaintFileEditorPermanents()
 	CreateWindow(WC_STATIC, TEXT("To:"), WS_VISIBLE | WS_CHILD,
 		toFrequencyBaseXPos, chooseFrequenciesYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER,
+	fileEditor.toFreqTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER | WS_TABSTOP,
 		toFrequencyBaseXPos + CONTROL_DESCRIPTION_WIDTH, chooseFrequenciesYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.toFreqTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.toFreqTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
@@ -1246,7 +1252,7 @@ void PaintFileEditorPermanents()
 	CreateWindow(WC_STATIC, TEXT("Change:"), WS_VISIBLE | WS_CHILD,
 		graphXPos, chooseChangeYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS,
+	fileEditor.changeTypeDropdown = CreateWindow(WC_COMBOBOX, TEXT("Multiply"), CBS_DROPDOWNLIST | WS_VISIBLE | WS_CHILD | CBS_HASSTRINGS | WS_TABSTOP,
 		graphXPos + CONTROL_DESCRIPTION_WIDTH, chooseChangeYPos - 5, INPUT_TEXTBOX_WIDTH, 100, mainWindowHandle, NULL, NULL, NULL);
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Multiply"));
 	SendMessage(fileEditor.changeTypeDropdown, CB_ADDSTRING, 0, (LPARAM)TEXT("Add"));
@@ -1256,7 +1262,7 @@ void PaintFileEditorPermanents()
 	CreateWindow(WC_STATIC, TEXT("Amount:"), WS_VISIBLE | WS_CHILD,
 		toFrequencyBaseXPos, chooseChangeYPos, CONTROL_DESCRIPTION_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
-	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, 
+	fileEditor.changeAmountTextbox = CreateWindow(WC_EDIT, TEXT(""), WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER | WS_TABSTOP, 
 		toFrequencyBaseXPos + CONTROL_DESCRIPTION_WIDTH, chooseChangeYPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 	SetWindowSubclass(fileEditor.changeAmountTextbox, FloatTextboxWindowProc, 0, 0); // Setting textbox to only accept float numbers.
 	SendMessage(fileEditor.changeAmountTextbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
@@ -1271,13 +1277,13 @@ void PaintFileEditorPermanents()
 						   MIN_SMOOTHING, MAX_SMOOTHING, DEFAULT_SMOOTHING, SMOOTHING_TRACKBAR_LINESIZE, SMOOTHING_TRACKBAR_PAGESIZE, TEXT(""), NULL, FALSE);
 
 	// Adding buttons for undo, redo, apply.
-	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED,
+	fileEditor.undoButton = CreateWindow(WC_BUTTON, TEXT("Undo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED  | WS_TABSTOP | WS_GROUP,
 		graphXPos + GRAPH_WIDTH - BUTTON_WIDTH, chooseFrequenciesYPos, BUTTON_WIDTH, BUTTON_HEIGHT, mainWindowHandle, (HMENU)EDIT_ACTION_UNDO, NULL, NULL);
 
-	fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED,
+	fileEditor.redoButton = CreateWindow(WC_BUTTON, TEXT("Redo"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_DISABLED  | WS_TABSTOP,
 		graphXPos + GRAPH_WIDTH - BUTTON_WIDTH, chooseFrequenciesYPos + BUTTON_HEIGHT + GENERIC_SPACING, BUTTON_WIDTH, BUTTON_HEIGHT, mainWindowHandle, (HMENU)EDIT_ACTION_REDO, NULL, NULL);
 
-	CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+	CreateWindow(WC_BUTTON, TEXT("Apply"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER  | WS_TABSTOP | BS_DEFPUSHBUTTON,
 		graphXPos + GRAPH_WIDTH - BUTTON_WIDTH, chooseFrequenciesYPos + 2 * (BUTTON_HEIGHT + GENERIC_SPACING), BUTTON_WIDTH, BUTTON_HEIGHT, mainWindowHandle, (HMENU)EDIT_ACTION_APPLY, NULL, NULL);
 
 	// Un-graying menu options that will always be usable from now on.
@@ -1825,7 +1831,7 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
 	unsigned int baseRadiosXPos = CHOOSE_FILE_LENGTH_X_POS + 8;
 	unsigned int radiosYPos = CHOOSE_FILE_LENGTH_Y_POS + (2 * INPUTS_Y_SPACING);
 
-	newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP,
+	newFileOptionsHandles->depthOptions[0] = CreateWindow(WC_BUTTON, TEXT("8-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER | WS_GROUP | WS_TABSTOP,
 		baseRadiosXPos, radiosYPos, RADIO_WIDTH, STATIC_TEXT_HEIGHT, windowHandle, NULL, NULL, NULL);
 
 	newFileOptionsHandles->depthOptions[1] = CreateWindow(WC_BUTTON, TEXT("16-bit"), WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON | BS_VCENTER,
@@ -1843,10 +1849,10 @@ void PaintNewFileOptionsWindow(HWND windowHandle)
 	unsigned int buttonsBaseXPos = (NEW_FILE_OPTIONS_WIDTH - (2 * BUTTON_WIDTH) - GENERIC_SPACING) / 2;
 	unsigned int buttonsYPos = NEW_FILE_OPTIONS_HEIGHT - 2 * (BUTTON_HEIGHT);
 
-	CreateWindow(WC_BUTTON, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+	CreateWindow(WC_BUTTON, TEXT("Ok"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON,
 		buttonsBaseXPos, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)NEW_FILE_OPTIONS_OK, NULL, NULL);
 
-	CreateWindow(WC_BUTTON, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+	CreateWindow(WC_BUTTON, TEXT("Cancel"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_TABSTOP,
 		buttonsBaseXPos + BUTTON_WIDTH + GENERIC_SPACING, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)NEW_FILE_OPTIONS_CANCEL, NULL, NULL);
 }
 
@@ -1924,14 +1930,14 @@ void ProcessNewFileOptionsCommand(HWND windowHandle, WPARAM wparam, LPARAM lpara
 		case BN_CLICKED:
 			switch (LOWORD(wparam))
 			{
-			case NEW_FILE_OPTIONS_CANCEL:
-				CloseNewFileOptions(windowHandle);
-				break;
-			case NEW_FILE_OPTIONS_OK:
-				ApplyNewFileOptions(windowHandle);
-				break;
-			default:
-				break;
+				case NEW_FILE_OPTIONS_CANCEL:
+					CloseNewFileOptions(windowHandle);
+					break;
+				case NEW_FILE_OPTIONS_OK:
+					ApplyNewFileOptions(windowHandle);
+					break;
+				default:
+					break;
 			}
 
 		break;
@@ -1989,10 +1995,10 @@ void PaintSelectFileOptionWindow(HWND windowHandle)
 	unsigned int buttonsBaseXPos = (SELECT_FILE_OPTION_WIDTH - (2 * BUTTON_WIDTH) - GENERIC_SPACING) / 2;
 	unsigned int buttonsYPos = SELECT_FILE_OPTION_HEIGHT - 2 * (BUTTON_HEIGHT);
 
-	CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+	CreateWindow(WC_BUTTON, TEXT("New file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_TABSTOP | WS_GROUP,
 		buttonsBaseXPos, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)FILE_ACTION_NEW, NULL, NULL);
 
-	CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER,
+	CreateWindow(WC_BUTTON, TEXT("Open file"), WS_VISIBLE | WS_CHILD | BS_CENTER | BS_VCENTER | WS_TABSTOP | BS_DEFPUSHBUTTON,
 		buttonsBaseXPos + BUTTON_WIDTH + GENERIC_SPACING, buttonsYPos, BUTTON_WIDTH, BUTTON_HEIGHT, windowHandle, (HMENU)FILE_ACTION_OPEN, NULL, NULL);
 }
 
@@ -2045,7 +2051,8 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
 	WPARAM tickLength = DivCeilInt(maxValue - minValue, TRACKBAR_TICKS);
 
 	// Adding trackbar.
-	*trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS, xPos, yPos - 6, TRACKBAR_WIDTH, TRACKBAR_HEIGHT, windowHandle, 0, NULL, NULL);
+	*trackbar = CreateWindow(TRACKBAR_CLASS, NULL, WS_CHILD | WS_VISIBLE | TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP,
+		xPos, yPos - 6, TRACKBAR_WIDTH, TRACKBAR_HEIGHT, windowHandle, NULL, NULL, NULL);
 	SendMessage(*trackbar, TBM_SETRANGEMIN, (WPARAM)FALSE, (LPARAM)minValue); // Configuring min range of trackbar.
 	SendMessage(*trackbar, TBM_SETRANGEMAX, (WPARAM)TRUE, (LPARAM)maxValue);  // Configuring max range of trackbar.
 	SendMessage(*trackbar, TBM_SETPOS, (WPARAM)TRUE, (LPARAM)defaultValue);	  // Configuring default selection.
@@ -2054,7 +2061,8 @@ void AddTrackbarWithTextbox(HWND windowHandle, HWND* trackbar, HWND* textbox, in
 	SendMessage(*trackbar, TBM_SETTICFREQ, tickLength, 0);					  // Configuring how many ticks are on it.
 
 	// Adding textbox.
-	*textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER, xPos + TRACKBAR_WIDTH + GENERIC_SPACING, yPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, windowHandle, NULL, NULL, NULL);
+	*textbox = CreateWindow(WC_EDIT, defaultValueStr, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_CENTER | WS_TABSTOP,
+		xPos + TRACKBAR_WIDTH + GENERIC_SPACING, yPos - 2, INPUT_TEXTBOX_WIDTH, INPUT_TEXTBOX_HEIGHT, windowHandle, NULL, NULL, NULL);
 	SendMessage(*textbox, EM_SETLIMITTEXT, (WPARAM)INPUT_TEXTBOX_CHARACTER_LIMIT, 0); // Setting character limit.
 
 	if (naturalsOnly)

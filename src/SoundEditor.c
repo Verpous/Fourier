@@ -450,7 +450,6 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 	{																																								\
 		unsigned long long i;																																		\
 		precision##Real changeAmountMinusOne = changeAmount - 1.0; /* This number is often-used so we cache it.*/													\
-		fprintf(stderr, "applying multiplicative change of %f. Subtract 1 and it's %f.\n", changeAmount, changeAmountMinusOne);\
 																																									\
 		/* The window function is piecewise so we'll apply it in two parts.*/																						\
 		/* In the first part, 0 <= n < tukeyWidth, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
@@ -459,10 +458,8 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 		{																																							\
 			precision##Real multiplier = CAST(1.0, precision##Real) + (changeAmountMinusOne *																		\
 				(CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i))));												\
-			fprintf(stderr, "about to multiply sample[%llu]=%f%+fi and sample[%llu]=%f%+fi by %f.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), endSample - i, creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)), multiplier);\
 			get(channelData, startSample + i) *= multiplier;																										\
 			get(channelData, endSample - i) *= multiplier; /* Applying the change symmetrically.*/																	\
-			fprintf(stderr, "now they're %f%+fi and %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)));\
 		}																																							\
 																																									\
 		/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
@@ -472,9 +469,7 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 		/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
 		for (; i <= plateauEnd; i++)																																\
 		{																																							\
-			fprintf(stderr, "about to multiply sample[%llu]=%f%+fi by the change amount.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
 			get(channelData, startSample + i) *= changeAmount;																										\
-			fprintf(stderr, "now it's %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
 		}																																							\
 	}																																								\
 	else /* Additive change. This can be either add or subtract.*/																									\
@@ -677,3 +672,37 @@ void DeallocateModification(Modification* modification)
 
 	free(modification);
 }
+
+// TODO: delete this. It's here because it has debugging printfs for fixing the bug where making a change of 0 in a silent file causes the graph to no longer show silence, even when you undo.
+
+	// if (modification->changeType == MULTIPLY)																														\
+	// {																																								\
+	// 	unsigned long long i;																																		\
+	// 	precision##Real changeAmountMinusOne = changeAmount - 1.0; /* This number is often-used so we cache it.*/													\
+	// 	fprintf(stderr, "applying multiplicative change of %f. Subtract 1 and it's %f.\n", changeAmount, changeAmountMinusOne);\
+	// 																																								\
+	// 	/* The window function is piecewise so we'll apply it in two parts.*/																						\
+	// 	/* In the first part, 0 <= n < tukeyWidth, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
+	// 	/* We want the multiplication to apply the changeAmount at its peak and 1 at the edges. So the real multiplier is 1 + (changeAmount - 1) * w[n].*/			\
+	// 	for (i = 0; i < plateauStart; i++)																															\
+	// 	{																																							\
+	// 		precision##Real multiplier = CAST(1.0, precision##Real) + (changeAmountMinusOne *																		\
+	// 			(CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i))));												\
+	// 		fprintf(stderr, "about to multiply sample[%llu]=%f%+fi and sample[%llu]=%f%+fi by %f.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), endSample - i, creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)), multiplier);\
+	// 		get(channelData, startSample + i) *= multiplier;																										\
+	// 		get(channelData, endSample - i) *= multiplier; /* Applying the change symmetrically.*/																	\
+	// 		fprintf(stderr, "now they're %f%+fi and %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)));\
+	// 	}																																							\
+	// 																																								\
+	// 	/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
+	// 	unsigned long long plateauEnd = length - 1 - i;																												\
+	// 																																								\
+	// 	/* In the second part, tukeyWidth <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1 so we apply the full changeAmount.*/					\
+	// 	/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
+	// 	for (; i <= plateauEnd; i++)																																\
+	// 	{																																							\
+	// 		fprintf(stderr, "about to multiply sample[%llu]=%f%+fi by the change amount.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
+	// 		get(channelData, startSample + i) *= changeAmount;																										\
+	// 		fprintf(stderr, "now it's %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
+	// 	}																																							\
+	// }																																								\
