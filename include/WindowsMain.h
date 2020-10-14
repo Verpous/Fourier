@@ -57,6 +57,7 @@ typedef struct
 	HWND waveformGraphStatic;			// The static which contains the waveform graph bitmap.
 	HWND fourierGraphStatic;			// The static which contains the fourier transform graph bitmap.
 	HWND fourierMaxStatic;				// The static which contains the decibel value at the highest point on the fourier transform graph.
+	HWND hoverFrequencyStatic;			// The static which contains the frequency that's currently being hovered over.
 	HWND minFreqStatic;					// The static which contains the lowest frequency. This is always 0Hz, but the units can vary.
 	HWND maxFreqStatic;					// The static which contains the highest frequency, which is the nyquist frequency.
 	HWND fromFreqTextbox;				// The textbox for inputting the frequency to edit from.

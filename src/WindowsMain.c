@@ -292,7 +292,6 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 	{
 		case WM_CREATE:
 			PaintMainWindow(windowHandle);
-			//RegisterDragDrop(windowHandle, CreateWavDropTarget());
 			PostMessage(windowHandle, WM_STARTFILE, 0, 0); // This is a hack to resolve a bug that modal dialogs can't take focus when the main window was just created. Posting the message adds a delay which fixes it.
 			return 0;
 		case WM_STARTFILE:
@@ -320,7 +319,6 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 		case WM_CLOSE:
 			return PromptSaveAndClose();
 		case WM_DESTROY:
-			//RevokeDragDrop(windowHandle);
 			PostQuitMessage(0);
 			return 0;
 		// The following two cases are handled fine by the default window procedure, except that isSelecting needs to be set to FALSE.
@@ -462,6 +460,13 @@ LRESULT ProcessLMBUp(LPARAM lparam)
 {
 	if (fileEditor.isSelecting)
 	{
+		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
+
+		if (!IsInWindow(point, fileEditor.fourierGraphStatic))
+		{
+			ShowWindow(fileEditor.hoverFrequencyStatic, FALSE);
+		}
+
 		fileEditor.isSelecting = FALSE;
 		ReleaseCapture();
 	}
@@ -475,7 +480,7 @@ LRESULT ProcessRMBUp(LPARAM lparam)
 	{
 		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
 
-		// We begin selecting from this point, but only if the point that was pressed is inside the fourier graph static's bounds.
+		// We cancel the current selection if the point that was pressed is inside the fourier graph static's bounds.
 		if (IsInWindow(point, fileEditor.fourierGraphStatic))
 		{	
 			SetTextboxDouble(fileEditor.fromFreqTextbox, NAN, FALSE);
@@ -489,18 +494,19 @@ LRESULT ProcessRMBUp(LPARAM lparam)
 
 LRESULT ProcessMouseMove(LPARAM lparam)
 {
-	if (fileEditor.isSelecting)
-	{
-		POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
-		int mapping = MapWindowPoints(mainWindowHandle, fileEditor.fourierGraphStatic, &point, 1);
+	POINT point = { .x = GET_X_LPARAM(lparam), .y = GET_Y_LPARAM(lparam) };
+	char isHovering = IsInWindow(point, fileEditor.fourierGraphStatic);
+	int mapping = MapWindowPoints(mainWindowHandle, fileEditor.fourierGraphStatic, &point, 1);
 
-		// MapWindowPoints returns 0 on failure. It can also sometimes return 0 on success, but not in our case so we don't check for it.
-		if (mapping != 0)
+	// MapWindowPoints returns 0 on failure. It can also sometimes return 0 on success, but not in our case so we don't check for it.
+	if (mapping != 0 && (fileEditor.isSelecting || isHovering))
+	{
+		double nyquist = GetNyquistDouble(fileEditor.fileInfo);
+		double pointFreq = ClampDouble((point.x * nyquist) / (GRAPH_WIDTH - 1.0), 0.0, nyquist);
+		
+		// Setting the selection to go from the pivot to the current pressed point.
+		if (fileEditor.isSelecting)
 		{
-			// Setting the selection to go from the pivot to the current pressed point.
-			double nyquist = GetNyquistDouble(fileEditor.fileInfo);
-			double pointFreq = ClampDouble((point.x * nyquist) / (GRAPH_WIDTH - 1.0), 0.0, nyquist);
-			
 			// Deciding which textbox gets what value.
 			if (pointFreq < fileEditor.selectionPivot)
 			{
@@ -515,6 +521,15 @@ LRESULT ProcessMouseMove(LPARAM lparam)
 
 			UpdateSelection();
 		}
+
+		// Making sure the hover frequency static is enabled, and setting it to display the current frequency. We do this while selecting even if the user isn't hovering.
+		// If this is done before the above part where the set the new selection, it causes the hover text to be hidden.
+		ShowWindow(fileEditor.hoverFrequencyStatic, TRUE);
+		SetTextboxDouble(fileEditor.hoverFrequencyStatic, pointFreq, FALSE);
+	}
+	else // Not hovering nor selecting.
+	{
+		ShowWindow(fileEditor.hoverFrequencyStatic, FALSE);
 	}
 
 	return 0;
@@ -549,16 +564,7 @@ LRESULT ProcessDropFiles(HDROP dropHandle)
 	UINT pathLen = DragQueryFile(dropHandle, 0, NULL, 0);
 	LPTSTR buffer = malloc(sizeof(TCHAR) * (pathLen + 1)); // +1 for the null character.
 	DragQueryFile(dropHandle, 0, buffer, pathLen + 1);
-
-	if (HasWaveExtension(buffer))
-	{
-		FileOpen(buffer, mainWindowHandle);
-	}
-	else
-	{
-		MessageBox(mainWindowHandle, TEXT("The file is not a .wav file."), NULL, MB_ICONERROR | MB_OK);
-	}
-
+	FileOpen(buffer, mainWindowHandle);
 	free(buffer);
 	DragFinish(dropHandle);
 	return 0;
@@ -700,12 +706,6 @@ void FileNew(HWND windowHandle)
 
 void PromptFileOpen(HWND windowHandle)
 {
-	// Giving the user a chance to save his current progress first (if there isn't any the function will take care of that).
-	if (!PromptSaveProgress(windowHandle))
-	{
-		return; // Aborting the file open operation if the user chose it in the prompt.
-	}
-
 	// Now proceeding with opening a new file.
 	OPENFILENAME ofn = {0};
 	TCHAR filename[MAX_PATH];
@@ -736,6 +736,12 @@ void PromptFileOpen(HWND windowHandle)
 
 void FileOpen(LPCTSTR pathname, HWND windowHandle)
 {
+	// Giving the user a chance to save his current progress first (if there isn't any the function will take care of that).
+	if (!PromptSaveProgress(windowHandle))
+	{
+		return; // Aborting the file open operation if the user chose it in the prompt.
+	}
+	
 	FileInfo* fileInfo;
 	ReadWaveResult result = ReadWaveFile(&fileInfo, pathname);
 
@@ -884,7 +890,7 @@ void FileSaveAs(HWND windowHandle)
 			// Doing this manually and not using the OFN_OVERWRITEPROMPT flag because we append the file extension in the end, so the flag won't always catch it that a file will be overwritten.
 			if (FileExists(filename))
 			{
-				int choice = MessageBox(windowHandle, TEXT("A file with this name already exists and will be overwritten by this operation. Proceed anyway?"), TEXT("Warning"), MB_YESNOCANCEL | MB_ICONWARNING);
+				int choice = MessageBox(windowHandle, TEXT("A file with this name already exists. Would you like to replace it?"), TEXT("Warning"), MB_YESNOCANCEL | MB_ICONWARNING);
 
 				// Using an if statement instead of switch statement because I need to be able to use break here and not have it only break from the switch.
 				if (choice == IDCANCEL)
@@ -1054,16 +1060,16 @@ void ApplyModificationFromInput(HWND windowHandle)
 		return;
 	}
 
-	if (fromFreqInt >= toFreqInt)
+	if (fromFreqInt > toFreqInt)
 	{
-		MessageBox(windowHandle, TEXT("'From' frequency must be smaller than 'To' frequency."), NULL, MB_OK | MB_ICONERROR);
+		MessageBox(windowHandle, TEXT("'From' frequency must be smaller or equal to 'To' frequency."), NULL, MB_OK | MB_ICONERROR);
 		return;
 	}
 
 	// Modifications act on the fourier graph so we must switch domains first.
 	SetChannelDomain(currentChannel, FREQUENCY_DOMAIN);
 
-	// All modifications on the redo list are lost when you apply a new modificatio, but a new modification is allocated which can by coincidence get allocated exactly over one of them.
+	// All modifications on the redo list are lost when you apply a new modification, but a new modification is allocated which can by coincidence get allocated exactly over one of them.
 	// If it gets allocated where fileEditor.currentSaveState points to, we'll have no way to know that the current save state is lost. So we have to check this before applying the modification.
 	char losingSaveState = IsRedoable(fileEditor.modificationStack, fileEditor.currentSaveState);
 
@@ -1166,9 +1172,9 @@ void PaintFileEditor()
 
 void PaintFileEditorPermanents()
 {
-	fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS | WS_TABSTOP
-		, 5, 0, MAIN_WINDOW_WIDTH - 15, MAIN_WINDOW_HEIGHT - 53, mainWindowHandle, NULL, NULL, NULL);
-
+	fileEditor.channelTabs = CreateWindow(WC_TABCONTROL, TEXT(""), WS_CHILD | WS_CLIPSIBLINGS | WS_VISIBLE | TCS_TABS | WS_TABSTOP,
+		5, 0, MAIN_WINDOW_WIDTH - 15, MAIN_WINDOW_HEIGHT - 53, mainWindowHandle, NULL, NULL, NULL);
+		
 	// Originally, all the controls below this were children of this one. But apparently that makes this control receive notifications from its children instead of the main window receiving them, so I changed that.
 	CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | WS_BORDER | SS_WHITEFRAME, 10, 28, MAIN_WINDOW_WIDTH - 25, MAIN_WINDOW_HEIGHT - 87, mainWindowHandle, NULL, NULL, NULL);
 
@@ -1213,6 +1219,9 @@ void PaintFileEditorPermanents()
 
 	fileEditor.maxFreqStatic = CreateWindow(WC_STATIC, TEXT(""), WS_CHILD | WS_VISIBLE | SS_CENTER,
 		fourierFrequencyUnitsBaseXPos + GRAPH_WIDTH, fourierFrequencyUnitsYPos, LONG_STATIC_UNITS_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
+
+	fileEditor.hoverFrequencyStatic = CreateWindow(WC_STATIC, TEXT("testing"), WS_CHILD | WS_VISIBLE | SS_CENTER,
+		graphXPos + GRAPH_WIDTH - INPUT_TEXTBOX_WIDTH, fourierGraphYPos + 2, INPUT_TEXTBOX_WIDTH, STATIC_TEXT_HEIGHT, mainWindowHandle, NULL, NULL, NULL);
 
 	fileEditor.fourierGraphStatic = CreateWindow(WC_STATIC, NULL, WS_CHILD | WS_VISIBLE | WS_BORDER,
 		graphXPos, fourierGraphYPos, GRAPH_WIDTH + 2, GRAPH_HEIGHT + 2, mainWindowHandle, NULL, NULL, NULL); // The +2 adds room for the border. The waveform graph does this automatically because of the SS_BITMAP style.

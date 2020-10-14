@@ -145,14 +145,14 @@ double SquareMagnitudeDoubleComplex(double complex val)
  __attribute__((always_inline)) inline
 float LinearToDecibelFloatReal(float val, float reference)
 {
-	return 10 * log10f(val / reference);
+	return 10.0f * log10f(val / reference);
 }
 
 // Converts a linear double-precision float value to decibel units based on a reference point.
  __attribute__((always_inline)) inline
 double LinearToDecibelDoubleReal(double val, double reference)
 {
-	return 10 * log10(val / reference);
+	return 10.0 * log10(val / reference);
 }
 
 // Returns the division with ceiling of two integers.
@@ -161,6 +161,20 @@ long long DivCeilInt(long long numerator, long long denominator)
 {
 	lldiv_t divResult = lldiv(numerator, denominator);
 	return divResult.quot + (divResult.rem == 0 ? 0 : 1);
+}
+
+ // Squares a single-precision float.
+ __attribute__((always_inline)) inline
+float SquareFloatReal(float x)
+{
+	return x * x;
+}
+
+// Squares a double-precision float.
+ __attribute__((always_inline)) inline
+double SquareDoubleReal(double x)
+{
+	return x * x;
 }
 
 // Swaps the memory contents of the given addresses.

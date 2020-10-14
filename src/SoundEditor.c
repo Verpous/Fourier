@@ -24,6 +24,9 @@
 #include <limits.h>	 // For CHAR_BIT.
 #include <stdio.h>	 // For fprintf.
 
+#define MIN_ADDITIVE_SMOOTHING 0.4
+#define MAX_ADDITIVE_SMOOTHING 0.01
+
 #define SOUND_EDITOR_C_PRECISION_CONTENTS(precision)																									\
 /* Takes a magnitude and a phase angle and returns the complex number with these polar coordinates.*/													\
  __attribute__((always_inline)) inline																													\
@@ -407,7 +410,7 @@ char ApplyModification(unsigned long long fromSample, unsigned long long toSampl
 	modification->oldFunc = CreatePartialClone(channelsData[channel], fromSample, toSample); // Recording the state of the samples that are about to be changed.
 	modification->changeType = changeType;
 	modification->changeAmount = changeAmount;
-	modification->smoothing = smoothing;
+	modification->smoothing = changeType == MULTIPLY ? smoothing : (1 - smoothing) * MAX_ADDITIVE_SMOOTHING + smoothing * MIN_ADDITIVE_SMOOTHING; // Additive smoothing is interpolated between the real allowed values.
 	modification->channel = channel;
 	modification->prev = *modificationStack;
 	modification->next = NULL;
@@ -436,22 +439,19 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 	unsigned long long endSample = startSample + length - 1;																										\
 	precision##Real smoothing = modification->smoothing, changeAmount = modification->changeAmount;																	\
 																																									\
-	/* This value appears in a few different places.*/																												\
-	precision##Real tukeyWidth = (smoothing * length) / CAST(2.0, precision##Real);																					\
-																																									\
-	/* This gets reused in a lot of calculations.*/																													\
-	precision##Real piDivWidth = CAST(M_PI, precision##Real) / tukeyWidth;																							\
-																																									\
-	/* The graph plateaus at this sample. Need to have this rounded up.*/																							\
-	/* By clamping this the way that we do, we prevent double-dipping (applying the change to the same sample twice) when symmetrically applying a change.*/		\
-	unsigned long long plateauStart = ClampInt(llceil_##precision##Real(tukeyWidth), 0, length / 2);																\
-																																									\
 	if (modification->changeType == MULTIPLY)																														\
 	{																																								\
-		unsigned long long i;																																		\
-		precision##Real changeAmountMinusOne = changeAmount - 1.0; /* This number is often-used so we cache it.*/													\
+		/* Caching a few calculations first.*/																														\
+		precision##Real tukeyWidth = (smoothing * length) / CAST(2.0, precision##Real);																				\
+		precision##Real piDivWidth = CAST(M_PI, precision##Real) / tukeyWidth;																						\
+		precision##Real changeAmountMinusOne = changeAmount - 1.0;																									\
 																																									\
-		/* The window function is piecewise so we'll apply it in two parts.*/																						\
+		/* The graph plateaus at this sample. Need to have this rounded up.*/																						\
+		/* By clamping this the way that we do, we prevent double-dipping (applying the change to the same sample twice) when symmetrically applying a change.*/	\
+		unsigned long long plateauStart = ClampInt(llceil_##precision##Real(tukeyWidth), 0, length / 2);															\
+		unsigned long long i;																																		\
+																																									\
+		/* The function we use is piecewise so we'll apply it in two parts.*/																						\
 		/* In the first part, 0 <= n < tukeyWidth, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
 		/* We want the multiplication to apply the changeAmount at its peak and 1 at the edges. So the real multiplier is 1 + (changeAmount - 1) * w[n].*/			\
 		for (i = 0; i < plateauStart; i++)																															\
@@ -474,25 +474,16 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 	}																																								\
 	else /* Additive change. This can be either add or subtract.*/																									\
 	{																																								\
-		unsigned long long i;																																		\
-\
-		unsigned long long k = length / 2;\
-		unsigned long long N = NumOfSamples(&channelData);\
-\
-		for (i = 0; i < length; i++)\
-		{\
-			precision##Real addition = changeAmount * ((1 - RootOfUnity_##precision##Complex(k + i, 1)) / (1 - RootOfUnity_##precision##Complex(k + i, N)));\
-			precision##Real val = get(channelData, startSample + i);\
-			precision##Real magnitude = Clamp##precision(abs_##precision##Complex(val) + addition, 0.0, INFINITY);\
-			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude, carg_##precision##Complex(val));	\
-		}\
+		/* Caching a few things first.*/																															\
+		unsigned long long halfLength = length / 2;																													\
+		precision##Real highestIndex = length - 1;																													\
 																																									\
-		/* The window function is piecewise so we'll apply it in two parts.*/																						\
-		/* In the first part, 0 <= n < tukeyWindow, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
-		for (i = 0; i < plateauStart; i++)																															\
+		/* In this loop we apply the addition symmetrically for all samples except the middle one, if there's an odd number of samples.*/							\
+		for (unsigned long long i = 0; i < halfLength; i++)																											\
 		{																																							\
 			/* Calculating the magnitude we want to add.*/																											\
-			precision##Real addition = changeAmount * (CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i)));			\
+			/* The function we follow is exp(-((2n/N - 1) / smoothing)^2)*/																							\
+			precision##Real addition = changeAmount * exp_##precision##Real(-Square##precision##Real((((2 * i) / highestIndex) - 1) / smoothing));					\
 																																									\
 			/* Getting the samples we want to add to.*/																												\
 			precision##Real val1 = get(channelData, startSample + i);																								\
@@ -507,16 +498,12 @@ void ApplyModificationInternal(Function** channelsData, Modification* modificati
 			get(channelData, endSample - i) = PolarToCartesian_##precision##Complex(magnitude2, carg_##precision##Complex(val2));	 								\
 		}																																							\
 																																									\
-		/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
-		unsigned long long plateauEnd = length - 1 - i;																												\
-																																									\
-		/* In the second part, tukeyWindow <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1 so we add the full changeAmount.*/					\
-		/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
-		for (; i <= plateauEnd; i++)																																\
+		/* If there's an odd number of samples, we have to apply the middle sample separately so we don't double-dip.*/												\
+		if (length % 2 == 1)																																		\
 		{																																							\
-			precision##Real val = get(channelData, startSample + i);																								\
+			precision##Real val = get(channelData, startSample + halfLength);																						\
 			precision##Real magnitude = Clamp##precision(abs_##precision##Complex(val) + changeAmount, 0.0, INFINITY);												\
-			get(channelData, startSample + i) = PolarToCartesian_##precision##Complex(magnitude, carg_##precision##Complex(val));									\
+			get(channelData, startSample + halfLength) = PolarToCartesian_##precision##Complex(magnitude, carg_##precision##Complex(val));							\
 		}																																							\
 	}
 
@@ -672,37 +659,3 @@ void DeallocateModification(Modification* modification)
 
 	free(modification);
 }
-
-// TODO: delete this. It's here because it has debugging printfs for fixing the bug where making a change of 0 in a silent file causes the graph to no longer show silence, even when you undo.
-
-	// if (modification->changeType == MULTIPLY)																														\
-	// {																																								\
-	// 	unsigned long long i;																																		\
-	// 	precision##Real changeAmountMinusOne = changeAmount - 1.0; /* This number is often-used so we cache it.*/													\
-	// 	fprintf(stderr, "applying multiplicative change of %f. Subtract 1 and it's %f.\n", changeAmount, changeAmountMinusOne);\
-	// 																																								\
-	// 	/* The window function is piecewise so we'll apply it in two parts.*/																						\
-	// 	/* In the first part, 0 <= n < tukeyWidth, w[n] and w[length - 1 - n] are equal to 0.5 - 0.5 * cos(piDivWidth * n)).*/										\
-	// 	/* We want the multiplication to apply the changeAmount at its peak and 1 at the edges. So the real multiplier is 1 + (changeAmount - 1) * w[n].*/			\
-	// 	for (i = 0; i < plateauStart; i++)																															\
-	// 	{																																							\
-	// 		precision##Real multiplier = CAST(1.0, precision##Real) + (changeAmountMinusOne *																		\
-	// 			(CAST(0.5, precision##Real) - (CAST(0.5, precision##Real) * cos_##precision##Real(piDivWidth * i))));												\
-	// 		fprintf(stderr, "about to multiply sample[%llu]=%f%+fi and sample[%llu]=%f%+fi by %f.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), endSample - i, creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)), multiplier);\
-	// 		get(channelData, startSample + i) *= multiplier;																										\
-	// 		get(channelData, endSample - i) *= multiplier; /* Applying the change symmetrically.*/																	\
-	// 		fprintf(stderr, "now they're %f%+fi and %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)), creal_##precision##Complex(get(channelData, endSample - i)), cimag_##precision##Complex(get(channelData, endSample - i)));\
-	// 	}																																							\
-	// 																																								\
-	// 	/* This is the highest sample index that wasn't covered by the previous loop. We want to apply the next part for all remaining samples up to this one.*/	\
-	// 	unsigned long long plateauEnd = length - 1 - i;																												\
-	// 																																								\
-	// 	/* In the second part, tukeyWidth <= n <= (length - 1) / 2, w[n] and w[length - 1 - n] are equal to 1 so we apply the full changeAmount.*/					\
-	// 	/* We don't really bother with the math for what indices to apply it to. We just apply it to all indices that weren't affected by the previous part.*/		\
-	// 	for (; i <= plateauEnd; i++)																																\
-	// 	{																																							\
-	// 		fprintf(stderr, "about to multiply sample[%llu]=%f%+fi by the change amount.\n", startSample + i, creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
-	// 		get(channelData, startSample + i) *= changeAmount;																										\
-	// 		fprintf(stderr, "now it's %f%+fi.\n", creal_##precision##Complex(get(channelData, startSample + i)), cimag_##precision##Complex(get(channelData, startSample + i)));\
-	// 	}																																							\
-	// }																																								\

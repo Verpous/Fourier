@@ -1,8 +1,6 @@
 # Fourier
 A simple Windows program that lets you manipulate the strengths of different frequencies in .wav files. This program can be used to do Fourier synthesis, Fourier analysis, and equalization.
 
-Currently in development.
-
 Compilation instructions:
 1. Install [MSYS2](https://www.msys2.org/)
 2. Install mingw-w64 and [make](https://www.gnu.org/software/make/) for 64-bit using MSYS2
